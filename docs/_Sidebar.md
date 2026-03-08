@@ -5,6 +5,7 @@
 - [[Getting-Started]]
 - [[Configuration]]
 - [[API-Reference]]
+- [[PR-Reviews]]
 - [[Phases]]
 - [[Testing]]
 - [[Contributing]]
