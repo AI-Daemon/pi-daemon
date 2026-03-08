@@ -3,7 +3,7 @@
 ## Getting Started
 
 1. Fork and clone the repo
-2. Install Rust 1.75+: `rustup update stable`
+2. Install Rust 1.94+: `rustup update stable`
 3. Build: `cargo build`
 4. Test: `cargo test --all`
 5. Lint: `cargo clippy --all-targets -- -D warnings && cargo fmt --all -- --check`
