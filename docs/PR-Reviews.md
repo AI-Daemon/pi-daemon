@@ -59,13 +59,60 @@ These are checked by the [Architectural Review](#architectural-review-llm) as ad
 | **Naming Consistency** | Error types named `*Error` (not `*Err`), consistent patterns across sessions |
 | **Prompt Injection Leak** | System prompts, LLM instructions, or `"You are"` patterns in committed code |
 
-### 📖 Documentation
+### 📖 Documentation Architecture & Hygiene
+
+Documentation is treated as a system — not just individual files. Checks cover structure (do all the pages connect?), coherence (do they agree with each other?), and completeness (is anything missing?).
+
+Implemented as a **hybrid Documentation Architecture Validator** — a single workflow that runs tool-based structural checks first, then an LLM semantic review if `docs/` was modified.
+
+#### Structural Checks (Tool-Based — Always Run)
 
 | Check | Tool | Blocking | Comment | Description |
 |-------|------|:--------:|:-------:|-------------|
+| **Sidebar ↔ Files Sync** | Custom bash | ✅ | ✅ | Every `.md` in `docs/` (excluding `_`-prefixed) must be in `_Sidebar.md`, and every sidebar entry must have a corresponding file. Catches orphaned pages and dangling sidebar links. |
+| **Crate ↔ Architecture Sync** | Custom script | ⚠️ | ✅ | Parses `Cargo.toml` workspace members, verifies each crate appears in `Architecture.md`. Catches "added a crate but forgot to document it." |
+| **Internal Link Validation** | lychee | ⚠️ | ❌ | Validates all `[[Wiki-Links]]` and `[text](relative/path.md)` links resolve to real files. |
+| **Heading Structure Lint** | markdownlint | ⚠️ | ❌ | Consistent heading hierarchy: every page starts with `# Title`, uses `##` for sections, no level skipping. Config: `.markdownlint.json`. |
 | **Docs Drift Detection** | Custom script | ⚠️ | ✅ | If `routes*.rs` changed, was `API-Reference.md` updated? If `Cargo.toml` members changed, was `Architecture.md` updated? |
 | **Changelog Enforcement** | Custom script | ⚠️ | ❌ | Warns if `*.rs` files changed but `CHANGELOG.md` wasn't updated. |
-| **Broken Links** | lychee / markdown-link-check | ⚠️ | ❌ | Scans markdown files for broken internal/external links. |
+| **Broken External Links** | lychee | ⚠️ | ❌ | Checks external URLs in markdown files for 404s. |
+
+#### Semantic Checks (LLM-Based — Only When `docs/` Modified)
+
+These run as part of a single Gemini 2.5 Flash call, only triggered when the PR touches files in `docs/`. All documentation pages are sent as context.
+
+| Check | Blocking | Comment | Description |
+|-------|:--------:|:-------:|-------------|
+| **Terminology Consistency** | ⚠️ | ✅ | Are the same concepts named the same way across all pages? Catches "agent registry" vs "agent store" vs "agent manager" drift. |
+| **Contradiction Detection** | ⚠️ | ✅ | Do any pages contradict each other? e.g., Architecture.md says "4 crates" but Configuration.md references a 5th. |
+| **Completeness Check** | ⚠️ | ✅ | Does this PR introduce a concept (new crate, new API, new feature) that warrants a new documentation page or section that doesn't exist? |
+| **Coherence Review** | ⚠️ | ✅ | Do the docs read well as a whole? Consistent tone, logical flow between pages, no orphaned references. |
+
+#### Scheduled Checks (Weekly Cron — Not Per-PR)
+
+| Check | Tool | Description |
+|-------|------|-------------|
+| **Stale Content Detection** | Gemini 2.5 Flash | Weekly scan: sends all docs + codebase state to LLM, asks "which docs are stale, outdated, or describe things that no longer exist?" Opens a GitHub issue with findings. |
+
+#### Combined Output
+
+When both structural and semantic checks run, a single PR comment is posted:
+
+```
+## 📖 Documentation Review
+
+### Structure (automated)
+✅ All pages in sidebar
+✅ All internal links resolve
+⚠️ Architecture.md missing crate `pi-daemon-memory`
+✅ Heading structure valid
+
+### Coherence (AI review)
+✅ Terminology consistent across all pages
+⚠️ Getting-Started.md still references echo-back behavior — update for LLM integration
+✅ No contradictions between pages
+✅ New feature adequately documented
+```
 
 ### 🧹 PR Hygiene
 
