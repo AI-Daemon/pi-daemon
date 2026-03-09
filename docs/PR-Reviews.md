@@ -279,6 +279,23 @@ Agents can bypass with `--no-verify`, which is why CI scanning is the real backs
 
 ---
 
+## Workflow Permissions
+
+The CI workflow (`ci.yml`) uses a top-level `permissions` block to grant the `GITHUB_TOKEN` the minimum scopes needed:
+
+```yaml
+permissions:
+  contents: read          # checkout code
+  pull-requests: write    # post/update PR comments
+  checks: write           # report check results
+```
+
+**Why this matters:** Several jobs (`coverage`, `binary-size`, `report`) use `actions/github-script` to post PR comments via `github.rest.issues.createComment()`. Without `pull-requests: write`, these calls fail with `403 Resource not accessible by integration`.
+
+**When adding new checks:** If a new job needs to post PR comments or interact with the PR API, it's already covered by the top-level permissions block. No per-job permissions needed unless a job requires *additional* scopes.
+
+---
+
 ## Interpreting Results
 
 ### ✅ All checks pass
