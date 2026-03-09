@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Manual re-trigger for Check Gate via `workflow_dispatch` (#60/#61)
 
 ### Fixed
+- CI workflow permissions: added `pull-requests: write` so coverage, binary size, and PR report comments can post (#90)
 - Docs Drift check now covers workflow file changes and fails instead of only warning (#69)
 - Changelog check now covers workflow and Cargo.toml changes, not just `.rs` files (#69)
 - Check quality checks use `exit 1` instead of `::warning::` so they actually block PRs (#69)
