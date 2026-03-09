@@ -381,48 +381,80 @@ jobs:
           # Additional wait for any lingering TIME_WAIT state
           sleep 2
 
-          # Restart daemon on a different port to avoid any lingering issues
-          RECOVERY_PORT=4201
-          echo "Restarting daemon on port $RECOVERY_PORT..."
-          timeout 300 ./target/release/pi-daemon start --foreground --listen "127.0.0.1:$RECOVERY_PORT" &
-          NEW_PID=$!
-          echo "DAEMON_PID=$NEW_PID" >> $GITHUB_ENV
-          echo "New daemon PID: $NEW_PID"
-
-          # Wait for daemon to be ready again
-          echo "Waiting for daemon to be ready on port $RECOVERY_PORT..."
+          # Wait longer for port to be completely free (handle TIME_WAIT properly)
+          echo "Waiting for port 4200 to be completely free..."
           for i in $(seq 1 30); do
-            if curl -sf "http://127.0.0.1:$RECOVERY_PORT/api/health" >/dev/null 2>&1; then
-              echo "✅ Daemon restarted after ${i}s"
+            # Check if port is actually bound (not just responsive)
+            if ! ss -tlnp 2>/dev/null | grep -q ":4200 " && ! netstat -tlnp 2>/dev/null | grep -q ":4200 "; then
+              echo "✅ Port 4200 confirmed free after ${i}s"
               break
             fi
             if [ $i -eq 30 ]; then
-              echo "❌ Daemon failed to restart within 30s"
-              echo "Checking process status:"
-              ps aux | grep -E "pi-daemon|$NEW_PID" || echo "No pi-daemon processes found"
-              echo "Checking daemon.json state:"
-              ls -la ~/.pi-daemon/ 2>/dev/null || echo "No .pi-daemon directory"
+              echo "⚠️ Port 4200 still in use after 30s - checking what's using it:"
+              ss -tlnp 2>/dev/null | grep ":4200 " || true
+              netstat -tlnp 2>/dev/null | grep ":4200 " || true
+              echo "Will proceed anyway and see if restart works..."
+            fi
+            sleep 1
+          done
+
+          # Restart daemon on same port (4200) - this is how it works in production
+          echo "Restarting daemon on original port 4200..."
+          timeout 300 ./target/release/pi-daemon start --foreground &
+          NEW_PID=$!
+          echo "DAEMON_PID=$NEW_PID" >> $GITHUB_ENV
+          echo "New daemon PID: $NEW_PID"
+          
+          # Give the daemon a moment to start before checking
+          sleep 3
+
+          # Wait for daemon to be ready with detailed debugging
+          echo "Waiting for daemon to be ready..."
+          for i in $(seq 1 60); do
+            # Check if process is still alive
+            if ! kill -0 $NEW_PID 2>/dev/null; then
+              echo "❌ Daemon process ($NEW_PID) died during startup!"
+              echo "Checking for crash info:"
+              cat ~/.pi-daemon/daemon.json 2>/dev/null || echo "No daemon.json"
+              echo "Exit here since process crashed"
+              exit 1
+            fi
+            
+            # Check if health endpoint responds
+            if curl -sf http://127.0.0.1:4200/api/health >/dev/null 2>&1; then
+              echo "✅ Daemon restarted after ${i}s"
+              break
+            fi
+            
+            # Print debug info every 10 seconds
+            if [ $((i % 10)) -eq 0 ]; then
+              echo "Debug at ${i}s: process alive, checking port..."
+              ss -tlnp 2>/dev/null | grep ":4200 " || echo "Port 4200 not bound yet"
+            fi
+            
+            if [ $i -eq 60 ]; then
+              echo "❌ Daemon failed to restart on port 4200 within 60s"
+              echo "Final debugging info:"
+              echo "Process status:"
+              ps aux | grep -E "pi-daemon|$NEW_PID" || echo "No pi-daemon processes"
+              echo "Port status:"
+              ss -tlnp 2>/dev/null | grep ":4200 " || echo "Port 4200 not bound"
+              netstat -tlnp 2>/dev/null | grep ":4200 " || echo "Port 4200 not in netstat"
+              echo "daemon.json:"
               cat ~/.pi-daemon/daemon.json 2>/dev/null || echo "No daemon.json file"
-              echo "Checking port usage:"
-              netstat -tlnp 2>/dev/null | grep -E "4200|$RECOVERY_PORT" || echo "Ports not in use"
-              echo "Checking daemon logs (if any):"
-              tail -20 ~/.pi-daemon/logs/* 2>/dev/null || echo "No log files"
               exit 1
             fi
             sleep 1
           done
 
-          # Use the recovery port for the health check
-          RECOVERY_URL="http://127.0.0.1:$RECOVERY_PORT"
-
-          # Health check after recovery
-          HEALTH_RESP=$(curl -sf "$RECOVERY_URL/api/health")
+          # Health check after recovery (back on port 4200)
+          HEALTH_RESP=$(curl -sf http://127.0.0.1:4200/api/health)
           echo "Health response: $HEALTH_RESP"
           HEALTH_STATUS=$(echo "$HEALTH_RESP" | jq -r '.status' 2>/dev/null || echo "")
           [ "$HEALTH_STATUS" = "ok" ] || { 
             echo "❌ Health check failed after recovery, got status: '$HEALTH_STATUS'"; exit 1; 
           }
-          echo "✅ Crash recovery test passed"
+          echo "✅ Crash recovery test passed - daemon restarted on same port"
 
       # ─── Phase 4: Graceful Shutdown Testing ─────────────
 

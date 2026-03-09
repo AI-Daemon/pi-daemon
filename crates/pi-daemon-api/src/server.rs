@@ -68,7 +68,19 @@ pub async fn run_daemon(kernel: Arc<PiDaemonKernel>, config: DaemonConfig) -> an
 
     info!("pi-daemon listening on http://{addr}");
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    // Create TCP listener with SO_REUSEADDR for better port reuse
+    let listener = {
+        let socket = socket2::Socket::new(
+            socket2::Domain::for_address(addr),
+            socket2::Type::STREAM,
+            Some(socket2::Protocol::TCP),
+        )?;
+        socket.set_reuse_address(true)?;
+        socket.bind(&addr.into())?;
+        socket.listen(1024)?;
+        socket.set_nonblocking(true)?;
+        tokio::net::TcpListener::from_std(socket.into())?
+    };
 
     axum::serve(
         listener,

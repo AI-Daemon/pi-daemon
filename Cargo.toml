@@ -60,6 +60,9 @@ tokio-tungstenite = "0.24"
 # Async streams
 async-stream = "0.3"
 
+# Socket configuration
+socket2 = "0.5"
+
 # CLI testing
 assert_cmd = "2"
 predicates = "3"
