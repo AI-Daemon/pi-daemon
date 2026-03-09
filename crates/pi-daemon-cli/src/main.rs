@@ -78,12 +78,48 @@ async fn cmd_start(foreground: bool, listen_override: Option<String>) -> anyhow:
 
     // Check if daemon is already running
     if let Ok(info) = read_daemon_info() {
-        eprintln!(
-            "Daemon already running (PID {}) at {}",
-            info.pid, info.listen_addr
-        );
-        eprintln!("Run `pi-daemon stop` first.");
-        std::process::exit(1);
+        // Verify the process is actually running (not just a stale PID file)
+        #[cfg(unix)]
+        {
+            use std::process::Command;
+            let is_running = Command::new("kill")
+                .args(["-0", &info.pid.to_string()])
+                .output()
+                .map(|output| output.status.success())
+                .unwrap_or(false);
+            
+            if !is_running {
+                tracing::warn!(
+                    pid = info.pid,
+                    "Stale daemon.json found (process not running), removing"
+                );
+                remove_daemon_info();
+            } else {
+                eprintln!(
+                    "Daemon already running (PID {}) at {}",
+                    info.pid, info.listen_addr
+                );
+                eprintln!("Run `pi-daemon stop` first.");
+                std::process::exit(1);
+            }
+        }
+        
+        #[cfg(not(unix))]
+        {
+            // On non-Unix, less reliable process detection - warn and proceed cautiously
+            tracing::warn!(
+                "Found daemon.json on non-Unix system. If daemon is not actually running, \
+                delete ~/.pi-daemon/daemon.json manually"
+            );
+            eprintln!(
+                "Daemon appears to be running (PID {}) at {}",
+                info.pid, info.listen_addr
+            );
+            eprintln!(
+                "Run `pi-daemon stop` first, or delete ~/.pi-daemon/daemon.json if the process is dead."
+            );
+            std::process::exit(1);
+        }
     }
 
     // Create kernel
