@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Core types crate (`pi-daemon-types`) with agent, message, event, and error types (#4)
 - Kernel crate (`pi-daemon-kernel`) with agent registry and event bus (#5)
+- Config system with TOML files and environment variable overrides (#6)
+- GitHub PAT authentication for private repo access (#6)
 - Comprehensive CI/CD pipeline with 25+ automated checks (#24)
 - Supply chain security checks with cargo-deny (#34)
 - Code quality checks: unsafe detection, TODO tracking, docs drift, binary size (#35)
