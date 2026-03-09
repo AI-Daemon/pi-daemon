@@ -5,6 +5,10 @@ name: Auto-Approve on All Checks Passed
 # This satisfies the "1 required review" branch protection rule,
 # allowing agent-opened PRs to merge without human intervention
 # while still requiring all CI checks to pass.
+#
+# NOTE: GitHub always runs workflow files from the DEFAULT BRANCH (main),
+# not from the PR branch. Changes to this file in a PR will NOT take
+# effect until the PR is merged. This is a GitHub Actions limitation.
 
 on:
   # Fires when a workflow run (check suite) completes
