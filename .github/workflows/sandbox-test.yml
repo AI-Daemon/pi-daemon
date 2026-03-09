@@ -339,11 +339,12 @@ jobs:
           fi
 
       - name: "Recovery: Kill -9 and restart test"
+        timeout-minutes: 3
         run: |
           echo "Testing crash recovery..."
           
-          # Verify daemon is responding
-          curl -sf http://127.0.0.1:4200/api/health >/dev/null || { 
+          # Verify daemon is responding (with timeout to prevent hanging)
+          curl -sf --max-time 5 http://127.0.0.1:4200/api/health >/dev/null || { 
             echo "❌ Daemon not responding before kill test"; exit 1; 
           }
           
