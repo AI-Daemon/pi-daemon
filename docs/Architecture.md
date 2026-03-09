@@ -20,11 +20,11 @@ pi-daemon/
 │   ├── pi-daemon-kernel/         # Agent registry, event bus, config, scheduler, supervisor
 │   ├── pi-daemon-api/            # Axum HTTP + WebSocket server, webchat UI
 │   ├── pi-daemon-cli/            # Binary entry point + CLI commands
+│   ├── pi-daemon-test-utils/     # Shared test helpers
 │   ├── pi-daemon-memory/         # SQLite WAL memory substrate (Phase 2)
 │   ├── pi-daemon-hands/          # Autonomous capability packages (Phase 4)
 │   ├── pi-daemon-wire/           # Agent-to-agent P2P networking (Phase 5)
-│   ├── pi-daemon-channels/       # Telegram, Slack, Discord adapters (Phase 5)
-│   └── pi-daemon-test-utils/     # Shared test helpers
+│   └── pi-daemon-channels/       # Telegram, Slack, Discord adapters (Phase 5)
 ├── hands/                        # Bundled Hand manifests + system prompts
 ├── tests/e2e/                    # End-to-end tests
 └── docs/                         # Documentation (synced to wiki)
