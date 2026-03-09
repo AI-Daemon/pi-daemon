@@ -11,6 +11,14 @@ name: Auto-Approve on All Checks Passed
 # effect until the PR is merged. This is a GitHub Actions limitation.
 
 on:
+  # Manual trigger — escape hatch when event-driven triggers miss a PR.
+  # Usage: gh workflow run auto-approve.yml -f pr_number=59
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to auto-approve (checks must still pass)'
+        required: true
+        type: number
   # Fires when a workflow run (check suite) completes
   check_suite:
     types: [completed]
@@ -34,8 +42,9 @@ jobs:
   auto-approve:
     name: Auto-approve if all checks pass
     runs-on: ubuntu-latest
-    # Only run for PRs, not pushes
+    # Only run for PRs (or manual dispatch with a pr_number)
     if: >-
+      (github.event_name == 'workflow_dispatch') ||
       (github.event.check_suite.pull_requests[0] != null) ||
       (github.event.workflow_run.pull_requests[0] != null)
     steps:
@@ -46,7 +55,12 @@ jobs:
           script: |
             let prNumber;
 
-            if (context.payload.check_suite) {
+            // Manual dispatch — pr_number provided as input
+            const inputPR = '${{ github.event.inputs.pr_number }}';
+            if (inputPR && inputPR !== '') {
+              prNumber = parseInt(inputPR);
+              core.info(`Manual dispatch for PR #${prNumber}`);
+            } else if (context.payload.check_suite) {
               const prs = context.payload.check_suite.pull_requests;
               if (prs && prs.length > 0) {
                 prNumber = prs[0].number;
