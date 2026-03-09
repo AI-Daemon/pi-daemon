@@ -110,9 +110,12 @@ jobs:
             // approve before any job finishes. Updated to match actual CI output.
             const requiredChecks = [
               // Security workflows
+              // NOTE: 'Secrets Scan' and 'Credential Patterns' are intentionally
+              // excluded — GitHub's Checks API (checks.listForRef) never returns
+              // them for the PR head SHA, causing permanent "not started yet" state.
+              // They are still caught by the fail-safe sweep below that rejects
+              // approval if ANY check run has conclusion === 'failure'.
               'Scan commit messages for secrets',
-              'Secrets Scan', 
-              'Credential Patterns',
               // Core CI jobs
               'Lint',
               'Security Audit',
