@@ -20,23 +20,35 @@ Unauthenticated endpoints: `GET /`, `GET /api/health`
 
 ### System
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/health` | Health check — returns `{"status": "ok"}` |
-| `GET` | `/api/status` | Daemon status: version, uptime, agent count |
+| Method | Path | Description | Status Codes |
+|--------|------|-------------|-------------|
+| `GET` | `/api/health` | Health check — returns `{"status": "ok"}` | 200 |
+| `GET` | `/api/status` | Daemon status: version, uptime, agent count | 200 |
+
+#### GET /api/status
+
+**Response (200 OK):**
+```json
+{
+  "version": "0.1.0",
+  "uptime_secs": 3600,
+  "agent_count": 2
+}
+```
 
 ### Agents
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/agents` | List all registered agents |
-| `POST` | `/api/agents` | Register a new agent |
-| `GET` | `/api/agents/:id` | Get agent details |
-| `DELETE` | `/api/agents/:id` | Unregister an agent |
-| `POST` | `/api/agents/:id/heartbeat` | Record agent heartbeat |
+| Method | Path | Description | Status Codes |
+|--------|------|-------------|-------------|
+| `GET` | `/api/agents` | List all registered agents | 200 |
+| `POST` | `/api/agents` | Register a new agent | 201 |
+| `GET` | `/api/agents/{id}` | Get agent details | 200, 404, 400 |
+| `DELETE` | `/api/agents/{id}` | Unregister an agent | 204, 400 |
+| `POST` | `/api/agents/{id}/heartbeat` | Record agent heartbeat | 200, 404, 400 |
 
 #### POST /api/agents
 
+**Request:**
 ```json
 {
   "name": "my-agent",
@@ -45,7 +57,45 @@ Unauthenticated endpoints: `GET /`, `GET /api/health`
 }
 ```
 
+**Response (201 Created):**
+```json
+{
+  "agent_id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "my-agent"
+}
+```
+
 Agent kinds: `pi_instance`, `web_chat`, `terminal_chat`, `api_client`, `hand`
+
+#### GET /api/agents/{id}
+
+**Response (200 OK):**
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "name": "my-agent",
+  "kind": "api_client", 
+  "status": "idle",
+  "registered_at": "2026-03-09T07:30:00Z",
+  "last_heartbeat": "2026-03-09T07:30:15Z",
+  "model": "claude-sonnet-4-20250514",
+  "current_session": null
+}
+```
+
+**Error (400 Bad Request):**
+```json
+{
+  "error": "Invalid agent ID"
+}
+```
+
+**Error (404 Not Found):**
+```json
+{
+  "error": "Agent not found"
+}
+```
 
 ### Sessions (Phase 2+)
 
@@ -93,11 +143,37 @@ Agent kinds: `pi_instance`, `web_chat`, `terminal_chat`, `api_client`, `hand`
 | `POST` | `/api/approvals/:id/approve` | Approve a request |
 | `POST` | `/api/approvals/:id/reject` | Reject a request |
 
+### Webchat
+
+| Method | Path | Description | Status Codes |
+|--------|------|-------------|-------------|
+| `GET` | `/` | Webchat UI (placeholder in Phase 1) | 200 |
+
+> **Note:** The webchat currently serves a simple placeholder page. Full SPA implementation comes in issue #9.
+
 ### Events
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/events` | Recent event history (last 100) |
+| Method | Path | Description | Status Codes |
+|--------|------|-------------|-------------|
+| `GET` | `/api/events` | Recent event history (last 100) | 200 |
+
+#### GET /api/events
+
+**Response (200 OK):**
+```json
+[
+  {
+    "id": "550e8400-e29b-41d4-a716-446655440001",
+    "source": "550e8400-e29b-41d4-a716-446655440000",
+    "target": "Broadcast",
+    "payload": {
+      "type": "AgentRegistered",
+      "name": "my-agent"
+    },
+    "timestamp": "2026-03-09T07:30:00Z"
+  }
+]
+```
 
 ---
 

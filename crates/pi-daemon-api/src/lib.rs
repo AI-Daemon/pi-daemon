@@ -1,3 +1,7 @@
 //! HTTP/WebSocket API server — routes, webchat UI, streaming.
 
-// TODO(#7): Add API server — Axum routes, WebSocket handlers, embedded webchat UI
+pub mod middleware;
+pub mod routes;
+pub mod server;
+pub mod state;
+pub mod webchat;
