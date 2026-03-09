@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OpenAI-compatible `/v1/chat/completions` endpoint with streaming support (#10)
 - CLI daemon lifecycle commands: start/stop/status/chat/config (#11)
 - Sandbox integration test workflow for real binary lifecycle validation (#37)
+- Fix sandbox test hanging + stale PID detection for robust crash recovery (#83)
 - Comprehensive CI/CD pipeline with 25+ automated checks (#24)
 - Supply chain security checks with cargo-deny (#34)
 - Code quality checks: unsafe detection, TODO tracking, docs drift, binary size (#35)
