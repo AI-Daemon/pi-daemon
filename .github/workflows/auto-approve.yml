@@ -5,6 +5,10 @@ name: Auto-Approve on All Checks Passed
 # This satisfies the "1 required review" branch protection rule,
 # allowing agent-opened PRs to merge without human intervention
 # while still requiring all CI checks to pass.
+#
+# NOTE: GitHub always runs workflow files from the DEFAULT BRANCH (main),
+# not from the PR branch. Changes to this file in a PR will NOT take
+# effect until the PR is merged. This is a GitHub Actions limitation.
 
 on:
   # Fires when a workflow run (check suite) completes
@@ -87,10 +91,19 @@ jobs:
               ref: headSha,
             });
 
-            // Required checks — these must all pass for auto-approve
+            // Required checks — these must all pass for auto-approve.
+            // This list must include ALL blocking checks so we never
+            // approve before slow jobs (coverage, security audit) finish.
             const requiredChecks = [
+              // Security (from security.yml / commit-msg-scan.yml)
               'Scan commit messages for secrets',
               'Secrets Scan',
+              'Credential Patterns',
+              // CI jobs (from ci.yml)
+              'Lint',
+              'Security Audit',
+              'Minimum Supported Rust Version',
+              'PR Report',
             ];
 
             // Check statuses

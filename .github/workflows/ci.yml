@@ -1,32 +1,337 @@
 name: CI
+
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+
+# Cancel in-progress runs for the same PR
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Minimum supported Rust version
+  MSRV: "1.94"
 
 jobs:
-  build:
+  # ─── Lint ───────────────────────────────────────────────
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          components: rustfmt, clippy
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: lint
 
-      - name: Cargo Build
-        run: cargo build --verbose
-
-      - name: Cargo Clippy
-        run: cargo clippy --verbose --all-targets --all-features -- -D warnings
-
-      - name: Cargo Format Check
+      - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Run tests
-        run: cargo test --verbose --all
+      - name: Clippy (all targets, all features)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Check docs compile
+        run: cargo doc --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+
+  # ─── Unit Tests ─────────────────────────────────────────
+  test-unit:
+    name: Unit Tests (${{ matrix.crate }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        crate:
+          - pi-daemon-types
+          - pi-daemon-kernel
+          - pi-daemon-api
+          - pi-daemon-cli
+          # Future crates added here as they're created:
+          # - pi-daemon-memory
+          # - pi-daemon-hands
+          # - pi-daemon-wire
+          # - pi-daemon-channels
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-${{ matrix.crate }}
+
+      - name: Run unit tests
+        run: cargo test -p ${{ matrix.crate }} -- --nocapture
+        env:
+          RUST_LOG: debug
+
+  # ─── Integration Tests ──────────────────────────────────
+  test-integration:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [lint]  # Only run if lint passes
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: integration
+
+      - name: Run integration tests
+        run: cargo test --tests -- --nocapture
+        env:
+          RUST_LOG: debug
+          # Integration tests may need these:
+          PI_DAEMON_TEST: "1"
+          PI_DAEMON_LISTEN_ADDR: "127.0.0.1:0"  # random port
+
+  # ─── Coverage ───────────────────────────────────────────
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    needs: [test-unit]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: coverage
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Generate coverage
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: lcov.info
+
+      - name: Coverage summary
+        run: cargo llvm-cov --all-features --workspace --text | tee coverage-summary.txt
+
+      - name: Post coverage to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summary = fs.readFileSync('coverage-summary.txt', 'utf8');
+            
+            // Extract total line from coverage output
+            const lines = summary.split('\n');
+            const totalLine = lines.find(l => l.includes('TOTAL'));
+            
+            const commitSha = (context.payload.pull_request?.head?.sha || context.sha).slice(0, 7);
+            const body = "## 📊 Code Coverage (" + commitSha + ")\n\n" +
+              "```\n" + lines.slice(-10).join('\n') + "\n```\n\n" +
+              "<details>\n<summary>Full coverage report</summary>\n\n" +
+              "```\n" + summary + "\n```\n</details>\n\n" +
+              "*Coverage for commit: " + commitSha + "*";
+            
+            // Find existing coverage comment for this commit
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            // Look for existing coverage comment
+            const existing = comments.find(c => 
+              c.user.login === 'github-actions[bot]' && 
+              c.body.includes('📊 Code Coverage')
+            );
+            
+            if (existing) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+  # ─── Security Audit ─────────────────────────────────────
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run security audit
+        run: cargo audit
+        continue-on-error: true  # Advisory-only initially
+
+      - name: Check for known vulnerabilities
+        run: cargo audit --deny warnings || true
+
+  # ─── Build ──────────────────────────────────────────────
+  build-release:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          # Future: add windows, more Linux arches
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: build-${{ matrix.target }}
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Check binary size
+        run: |
+          BINARY="target/${{ matrix.target }}/release/pi-daemon"
+          if [ -f "$BINARY" ]; then
+            SIZE=$(stat -c%s "$BINARY" 2>/dev/null || stat -f%z "$BINARY" 2>/dev/null)
+            SIZE_MB=$((SIZE / 1024 / 1024))
+            echo "Binary size: ${SIZE_MB}MB ($SIZE bytes)"
+            if [ "$SIZE_MB" -gt 50 ]; then
+              echo "::warning::Binary size exceeds 50MB: ${SIZE_MB}MB"
+            fi
+          fi
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-daemon-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/pi-daemon
+
+  # ─── Build Gate ─────────────────────────────────────────
+  # Required status check for branch protection (must be named "build")
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    needs: [lint, test-unit, test-integration, build-release, msrv]
+    if: always()
+    steps:
+      - name: Check results
+        run: |
+          if [ "${{ needs.lint.result }}" != "success" ] || \
+             [ "${{ needs.test-unit.result }}" != "success" ] || \
+             [ "${{ needs.test-integration.result }}" != "success" ] || \
+             [ "${{ needs.build-release.result }}" != "success" ] || \
+             [ "${{ needs.msrv.result }}" != "success" ]; then
+            echo "One or more required jobs failed"
+            exit 1
+          fi
+          echo "All required jobs passed"
+
+  # ─── MSRV Check ─────────────────────────────────────────
+  msrv:
+    name: Minimum Supported Rust Version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ env.MSRV }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: msrv
+
+      - name: Check MSRV
+        run: cargo check --all-features
+
+  # ─── PR Report ──────────────────────────────────────────
+  # This job waits for ALL other jobs before running
+  report:
+    name: PR Report
+    runs-on: ubuntu-latest
+    if: always() && github.event_name == 'pull_request'
+    needs: [lint, test-unit, test-integration, coverage, security, build-release, msrv]
+    steps:
+      - name: Collect results
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const jobs = {
+              lint: '${{ needs.lint.result }}',
+              'test-unit': '${{ needs.test-unit.result }}',
+              'test-integration': '${{ needs.test-integration.result }}',
+              coverage: '${{ needs.coverage.result }}',
+              security: '${{ needs.security.result }}',
+              build: '${{ needs.build-release.result }}',
+              msrv: '${{ needs.msrv.result }}',
+            };
+            
+            const icon = (s) => s === 'success' ? '✅' : s === 'skipped' ? '⏭️' : '❌';
+            const rows = Object.entries(jobs)
+              .map(([name, result]) => `| ${icon(result)} | ${name} | ${result} |`)
+              .join('\n');
+            
+            const allPassed = Object.values(jobs).every(r => r === 'success' || r === 'skipped');
+            const header = allPassed ? '## ✅ All CI checks passed' : '## ❌ CI checks failed';
+            
+            const commitSha = (context.payload.pull_request?.head?.sha || context.sha).slice(0, 7);
+            const body = header + " (" + commitSha + ")\n\n" +
+              "| Status | Job | Result |\n" +
+              "|--------|-----|---------|\n" +
+              rows + "\n\n---\n" +
+              "*Run: [" + context.runId + "](" + context.serverUrl + "/" + context.repo.owner + "/" + context.repo.repo + "/actions/runs/" + context.runId + ")*\n" +
+              "*Commit: " + commitSha + "*";
+            
+            // Find existing PR report comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            
+            const existing = comments.find(c => 
+              c.user.login === 'github-actions[bot]' && 
+              c.body.includes('CI checks')
+            );
+            
+            if (existing) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+            // Set outputs for auto-approve
+            core.setOutput('all-passed', allPassed);
