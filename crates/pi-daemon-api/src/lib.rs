@@ -1,6 +1,7 @@
 //! HTTP/WebSocket API server — routes, webchat UI, streaming.
 
 pub mod middleware;
+pub mod openai_compat;
 pub mod routes;
 pub mod server;
 pub mod state;

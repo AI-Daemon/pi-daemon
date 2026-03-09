@@ -21,6 +21,7 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 bytes = { workspace = true }
 anyhow = { workspace = true }
+async-stream = { workspace = true }
 
 [dev-dependencies]
 reqwest = { workspace = true }
