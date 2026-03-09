@@ -49,15 +49,15 @@ impl Default for DaemonConfig {
 pub struct ProvidersConfig {
     /// Anthropic API key.
     pub anthropic_api_key: String,
-    /// Anthropic base URL (default: "https://api.anthropic.com").
+    /// Anthropic base URL (default: <https://api.anthropic.com>).
     pub anthropic_base_url: String,
     /// OpenAI API key.
     pub openai_api_key: String,
-    /// OpenAI base URL (default: "https://api.openai.com").
+    /// OpenAI base URL (default: <https://api.openai.com>).
     pub openai_base_url: String,
     /// OpenRouter API key (routes to multiple providers).
     pub openrouter_api_key: String,
-    /// Ollama base URL for local models (default: "http://localhost:11434").
+    /// Ollama base URL for local models (default: <http://localhost:11434>).
     pub ollama_base_url: String,
 }
 
@@ -68,7 +68,7 @@ pub struct GitHubConfig {
     /// Personal Access Token for private repo access.
     /// Scopes needed: repo, read:org
     pub personal_access_token: String,
-    /// GitHub API base URL (default: "https://api.github.com").
+    /// GitHub API base URL (default: <https://api.github.com>).
     /// Override for GitHub Enterprise.
     pub api_base_url: String,
     /// Default organization/user for repo operations.
