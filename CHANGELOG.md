@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI daemon lifecycle commands: start/stop/status/chat/config (#11)
 - Sandbox integration test workflow for real binary lifecycle validation (#37)
 - Enhanced architectural review with intelligent file filtering and dual-layer analysis (#98)
+- Test quality review workflow with intelligent test file classification (#101)
 - Comprehensive CI/CD pipeline with 25+ automated checks (#24)
 - Supply chain security checks with cargo-deny (#34)
 - Code quality checks: unsafe detection, TODO tracking, docs drift, binary size (#35)

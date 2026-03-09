@@ -251,6 +251,47 @@ The most unique check. Uses **Gemini 2.5 Flash** via OpenRouter with intelligent
 
 ---
 
+## 🧪 Test Quality Review
+
+Specialized review workflow for test files with testing expertise. Uses intelligent file classification to focus on test patterns, coverage, and test design quality.
+
+**🔍 Test File Classification:**
+- **✅ Reviews:** Test files (test., spec., tests/, _test., test_*.rs) containing testing patterns
+- **📖 Context:** Related source files for understanding test purpose (limited)
+- **❌ Excludes:** Non-test files (handled by other review workflows)
+- **⏭️ Auto-Pass:** PRs with no test files skip review with explanation
+
+**🎯 Dual-Layer Test Review System:**
+1. **Testing Compliance Layer** — Objective test pattern verification:
+   - Test naming conventions (test_behavior_expectation)
+   - Test organization and file structure
+   - Assertion quality (no unwrap(), descriptive expect())
+   - Test isolation (no shared mutable state)
+   - Test utilities usage consistency
+   - Async test pattern compliance
+
+2. **Test Quality Analysis** — Expert testing judgment:
+   - Test coverage strategy effectiveness
+   - Test maintainability and readability
+   - Integration vs unit test balance
+   - Test data management approaches
+   - Performance implications of test changes
+
+**🔒 Pass/Fail Logic:**
+- ✅ **PASS:** Both testing compliance AND test quality analysis approve
+- ❌ **FAIL:** Either layer can fail - focus on testing best practices
+- **Testing Focus:** Reviews test patterns, not general code architecture
+
+**📊 Test-Focused Output:**
+- Test file classification showing what was analyzed vs context
+- Dual-layer results with testing compliance + test quality feedback
+- Clear guidance on test patterns and testing best practices
+- Auto-pass explanation for non-test PRs
+
+**💰 Cost:** Future LLM integration will use similar token-optimized approach as architectural review.
+
+---
+
 ## Branch Protection & Check Gate
 
 The `main` branch is protected with the following rules:

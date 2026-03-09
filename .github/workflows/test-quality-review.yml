@@ -97,7 +97,7 @@ jobs:
                 {"name": "File Classification", "status": "pass", "detail": $detail}
               ],
               "issues": [],
-              "notes": "Test quality review focuses on test files, testing patterns, and test architecture. No test files detected in this PR.",
+              "notes": "Test quality review focuses on test files, testing patterns, and test quality. No test files detected in this PR.",
               "checklist_verdict": "PASS",
               "expert_verdict": "PASS"
             }' > /tmp/review_result.json
@@ -160,7 +160,7 @@ jobs:
               summary += `| Status | Check | Detail |\n|--------|-------|--------|\n${checksTable}\n\n`;
             }
             
-            summary += `### ${expertIcon} Test Architecture Analysis - ${review.expert_verdict || 'PASS'}\n\n`;
+            summary += `### ${expertIcon} Test Quality Analysis - ${review.expert_verdict || 'PASS'}\n\n`;
             
             if (review.test_analysis) {
               summary += `${review.test_analysis}\n\n`;
