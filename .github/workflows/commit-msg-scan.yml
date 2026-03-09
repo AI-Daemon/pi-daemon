@@ -1,0 +1,123 @@
+name: Commit Message Secret Scan
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  scan-commit-messages:
+    name: Scan commit messages for secrets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan all PR commit messages
+        id: scan
+        run: |
+          echo "Scanning commit messages in PR..."
+          echo ""
+
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+
+          # Secret patterns (same as scripts/check-commit-msg.sh)
+          PATTERNS='(ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9]{22}_[a-zA-Z0-9]{59}|sk-or-v1-[a-f0-9]{64}|sk-ant-[a-zA-Z0-9]{20,}|sk-proj-[a-zA-Z0-9]{20,}|sk-[a-zA-Z0-9]{48}|AKIA[0-9A-Z]{16}|glpat-[a-zA-Z0-9\-]{20,}|xoxb-[0-9]{10,}|xoxp-[0-9]{10,})'
+
+          # Env dump patterns (searched separately to avoid false positives in diff content)
+          ENV_PATTERNS='^(GH_TOKEN|OPENROUTER_API_KEY|NEO4J_PASSWORD|AWS_SECRET_ACCESS_KEY|GITHUB_TOKEN)=.+'
+
+          FOUND=0
+          REPORT=""
+
+          for SHA in $(git rev-list "$BASE_SHA".."$HEAD_SHA"); do
+            MSG=$(git log --format="%B" -1 "$SHA")
+            SHORT=$(git log --format="%h %s" -1 "$SHA")
+
+            # Check for secret tokens
+            TOKEN_MATCH=$(echo "$MSG" | grep -E "$PATTERNS" || true)
+            # Check for env dump lines
+            ENV_MATCH=$(echo "$MSG" | grep -E "$ENV_PATTERNS" || true)
+
+            if [ -n "$TOKEN_MATCH" ] || [ -n "$ENV_MATCH" ]; then
+              FOUND=$((FOUND + 1))
+              REPORT+="### ❌ \`$SHORT\`\n"
+              if [ -n "$TOKEN_MATCH" ]; then
+                REPORT+="Secret token pattern detected:\n\`\`\`\n$TOKEN_MATCH\n\`\`\`\n"
+              fi
+              if [ -n "$ENV_MATCH" ]; then
+                REPORT+="Environment variable dump detected:\n\`\`\`\n$ENV_MATCH\n\`\`\`\n"
+              fi
+              REPORT+="\n"
+            else
+              echo "✅ $SHORT"
+            fi
+          done
+
+          if [ "$FOUND" -gt 0 ]; then
+            echo "found=$FOUND" >> "$GITHUB_OUTPUT"
+            # Write report to file for the comment step
+            echo -e "$REPORT" > /tmp/scan-report.md
+            echo ""
+            echo "🚨 Found secrets in $FOUND commit message(s)"
+            exit 1
+          else
+            echo ""
+            echo "✅ All commit messages are clean"
+          fi
+
+      - name: Comment on PR if secrets found
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.existsSync('/tmp/scan-report.md')
+              ? fs.readFileSync('/tmp/scan-report.md', 'utf8')
+              : 'Secret patterns detected in commit messages.';
+
+            const body = `## 🚨 Secrets Detected in Commit Messages
+
+            This PR contains commit messages with potential secrets or environment variable dumps.
+
+            ${report}
+
+            **This must be fixed before merge.** You need to rewrite the commit messages:
+
+            1. \`git rebase -i <base-commit>\` and edit the offending commits
+            2. Remove the secrets from the commit messages
+            3. Force-push the branch
+
+            *🔒 Automated commit-message secret scan*`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c =>
+              c.body && c.body.includes('Secrets Detected in Commit Messages')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

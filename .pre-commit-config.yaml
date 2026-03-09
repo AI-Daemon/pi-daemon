@@ -1,0 +1,20 @@
+# Pre-commit hooks for pi-daemon
+# Install: pip install pre-commit && pre-commit install --hook-type pre-commit --hook-type commit-msg
+# Docs: https://pre-commit.com/
+
+repos:
+  # Gitleaks — scan staged file content for secrets
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
+  # Custom commit-msg hook — scan commit messages for leaked secrets
+  - repo: local
+    hooks:
+      - id: check-commit-msg-secrets
+        name: Check commit message for secrets
+        entry: scripts/check-commit-msg.sh
+        language: script
+        stages: [commit-msg]
+        always_run: true
