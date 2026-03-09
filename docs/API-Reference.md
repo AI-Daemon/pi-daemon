@@ -24,6 +24,7 @@ Unauthenticated endpoints: `GET /`, `GET /api/health`
 |--------|------|-------------|-------------|
 | `GET` | `/api/health` | Health check — returns `{"status": "ok"}` | 200 |
 | `GET` | `/api/status` | Daemon status: version, uptime, agent count | 200 |
+| `POST` | `/api/shutdown` | Graceful daemon shutdown | 200 |
 
 #### GET /api/status
 
@@ -35,6 +36,17 @@ Unauthenticated endpoints: `GET /`, `GET /api/health`
   "agent_count": 2
 }
 ```
+
+#### POST /api/shutdown
+
+**Response (200 OK):**
+```json
+{
+  "message": "Shutdown initiated"
+}
+```
+
+> **Note:** This endpoint triggers graceful daemon shutdown. The daemon will close all connections and exit after responding.
 
 ### Agents
 
@@ -173,6 +185,107 @@ Agent kinds: `pi_instance`, `web_chat`, `terminal_chat`, `api_client`, `hand`
     "timestamp": "2026-03-09T07:30:00Z"
   }
 ]
+```
+
+---
+
+## OpenAI-Compatible API
+
+### Chat Completions
+
+| Method | Path | Description | Status Codes |
+|--------|------|-------------|-------------|
+| `POST` | `/v1/chat/completions` | OpenAI-compatible chat completions | 200, 400, 422 |
+
+#### POST /v1/chat/completions
+
+**Request:**
+```json
+{
+  "model": "pi-main",
+  "messages": [
+    {"role": "system", "content": "You are a helpful assistant"},
+    {"role": "user", "content": "Hello, how are you?"}
+  ],
+  "stream": false,
+  "max_tokens": 150,
+  "temperature": 0.7
+}
+```
+
+**Response (200 OK, Non-streaming):**
+```json
+{
+  "id": "chatcmpl-abc123",
+  "object": "chat.completion",
+  "created": 1709900000,
+  "model": "pi-main",
+  "choices": [{
+    "index": 0,
+    "message": {"role": "assistant", "content": "Hello! I'm doing well, thank you for asking..."},
+    "finish_reason": "stop"
+  }],
+  "usage": {"prompt_tokens": 15, "completion_tokens": 20, "total_tokens": 35}
+}
+```
+
+**Response (200 OK, Streaming `"stream": true`):**
+Server-Sent Events format:
+```
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"!"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-abc123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+```
+
+**Error (400 Bad Request):**
+```json
+{
+  "error": {
+    "message": "At least one message is required",
+    "type": "invalid_request_error",
+    "param": "messages"
+  }
+}
+```
+
+#### Client Examples
+
+**Python openai library:**
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://localhost:4200/v1",
+    api_key="your-api-key"  # Optional if no auth configured
+)
+
+response = client.chat.completions.create(
+    model="pi-main",
+    messages=[{"role": "user", "content": "Hello"}],
+    stream=True
+)
+
+for chunk in response:
+    print(chunk.choices[0].delta.content, end="")
+```
+
+**curl:**
+```bash
+# Non-streaming
+curl -s http://localhost:4200/v1/chat/completions \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"pi-main","messages":[{"role":"user","content":"Hello"}]}' | jq .
+
+# Streaming  
+curl -s http://localhost:4200/v1/chat/completions \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"pi-main","messages":[{"role":"user","content":"Hello"}],"stream":true}'
 ```
 
 ---
