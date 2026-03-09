@@ -98,24 +98,24 @@ jobs:
             const headSha = pr.head.sha;
             core.info(`Head SHA: ${headSha}`);
 
-            // Get all check runs for this commit
-            const { data: checkRuns } = await github.rest.checks.listForRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: headSha,
-            });
+            // Get all check runs for this commit (paginated — default per_page
+            // is 30, which silently drops checks when there are 30+).
+            const allCheckRuns = await github.paginate(
+              github.rest.checks.listForRef,
+              { owner: context.repo.owner, repo: context.repo.repo, ref: headSha, per_page: 100 },
+              (response) => response.data.check_runs
+            );
+            const checkRuns = { check_runs: allCheckRuns };
+            core.info(`Found ${allCheckRuns.length} check runs (paginated)`);
 
             // Required checks — these must all pass for auto-approve.
             // This list includes ALL blocking checks so we never
             // approve before any job finishes. Updated to match actual CI output.
             const requiredChecks = [
               // Security workflows
-              // NOTE: 'Secrets Scan' and 'Credential Patterns' are intentionally
-              // excluded — GitHub's Checks API (checks.listForRef) never returns
-              // them for the PR head SHA, causing permanent "not started yet" state.
-              // They are still caught by the fail-safe sweep below that rejects
-              // approval if ANY check run has conclusion === 'failure'.
               'Scan commit messages for secrets',
+              'Secrets Scan',
+              'Credential Patterns',
               // Core CI jobs
               'Lint',
               'Security Audit',
