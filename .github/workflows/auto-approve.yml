@@ -18,11 +18,11 @@ on:
   workflow_run:
     workflows:
       - "CI"
-      - "Secrets Scan"
+      - "Security"
       - "Commit Message Secret Scan"
       - "PR Hygiene"
-      - "Documentation Check"
-      - "Architectural Code Review"
+      - "Documentation"
+      - "Architectural Review"
     types: [completed]
 
 permissions:
@@ -92,21 +92,47 @@ jobs:
             });
 
             // Required checks — these must all pass for auto-approve.
-            // This list must include ALL blocking checks so we never
-            // approve before slow jobs (coverage, security audit) finish.
+            // This list includes ALL blocking checks so we never
+            // approve before any job finishes. Updated to match actual CI output.
             const requiredChecks = [
-              // Security (from security.yml / commit-msg-scan.yml)
+              // Security workflows
               'Scan commit messages for secrets',
-              'Secrets Scan',
+              'Secrets Scan', 
               'Credential Patterns',
-              // CI jobs (from ci.yml)
+              // Core CI jobs
               'Lint',
               'Security Audit',
               'Minimum Supported Rust Version',
               'PR Report',
+              'Code Coverage',
+              'Integration Tests',
+              // Build jobs
+              'Build (aarch64-apple-darwin)',
+              'Build (x86_64-unknown-linux-gnu)',
+              'build',
+              // Unit tests
+              'Unit Tests (pi-daemon-api)',
+              'Unit Tests (pi-daemon-cli)', 
+              'Unit Tests (pi-daemon-kernel)',
+              'Unit Tests (pi-daemon-types)',
+              // Supply chain & docs
+              'License & Supply Chain',
+              'Unused Dependencies',
+              'Crate Docs Sync',
+              // Documentation checks
+              'Link Check',
+              'Markdown Lint',
+              'Sidebar Sync',
+              // PR hygiene
+              'Commit Messages',
+              'PR Description', 
+              'PR Size',
+              // Architecture review
+              'Architecture Review',
+              'Architectural Review',
             ];
 
-            // Check statuses
+            // Build map of actual check results
             const results = {};
             for (const run of checkRuns.check_runs) {
               results[run.name] = {
@@ -115,12 +141,17 @@ jobs:
               };
             }
 
-            core.info('Check results:');
+            core.info('All check results:');
             let allPassed = true;
             let anyPending = false;
+            let requiredCount = 0;
+            let passedCount = 0;
 
+            // Check required checks first
             for (const name of requiredChecks) {
               const result = results[name];
+              requiredCount++;
+              
               if (!result) {
                 core.info(`  ⏳ ${name}: not started yet`);
                 anyPending = true;
@@ -134,25 +165,40 @@ jobs:
                 allPassed = false;
               } else {
                 core.info(`  ✅ ${name}: passed`);
+                passedCount++;
               }
             }
 
-            // Also check that NO check has failed
+            // Verify NO check has failed (including ones not in required list)
+            let failedChecks = [];
             for (const run of checkRuns.check_runs) {
               if (run.status === 'completed' && run.conclusion === 'failure') {
                 core.info(`  ❌ ${run.name}: FAILED`);
+                failedChecks.push(run.name);
                 allPassed = false;
               }
             }
 
+            core.info(`Summary: ${passedCount}/${requiredCount} required checks passed`);
+            if (failedChecks.length > 0) {
+              core.info(`Failed checks: ${failedChecks.join(', ')}`);
+            }
+
             if (anyPending) {
-              core.info('Some checks still pending — skipping auto-approve');
+              core.info('✋ Some checks still pending — skipping auto-approve for now');
+              core.setOutput('approve', 'false');
+            } else if (failedChecks.length > 0) {
+              core.info(`❌ ${failedChecks.length} checks failed — not approving`);
+              core.setOutput('approve', 'false');
+            } else if (passedCount < requiredCount * 0.9) {
+              // Allow up to 10% of required checks to be missing (for future flexibility)
+              core.info(`⚠️ Only ${passedCount}/${requiredCount} required checks found — may be configuration issue`);
               core.setOutput('approve', 'false');
             } else if (allPassed) {
-              core.info('All checks passed!');
+              core.info('🎉 All checks passed! Ready for auto-approve');
               core.setOutput('approve', 'true');
             } else {
-              core.info('Some checks failed — not approving');
+              core.info('❓ Unknown state — not approving');
               core.setOutput('approve', 'false');
             }
 
