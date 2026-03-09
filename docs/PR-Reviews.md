@@ -74,8 +74,8 @@ Implemented as a **hybrid Documentation Architecture Validator** — a single wo
 | **Crate ↔ Architecture Sync** | Custom script | ⚠️ | ✅ | Parses `Cargo.toml` workspace members, verifies each crate appears in `Architecture.md`. Catches "added a crate but forgot to document it." |
 | **Internal Link Validation** | lychee | ⚠️ | ❌ | Validates all `[[Wiki-Links]]` and `[text](relative/path.md)` links resolve to real files. |
 | **Heading Structure Lint** | markdownlint | ⚠️ | ❌ | Consistent heading hierarchy: every page starts with `# Title`, uses `##` for sections, no level skipping. Config: `.markdownlint.json`. |
-| **Docs Drift Detection** | Custom script | ⚠️ | ✅ | If `routes*.rs` changed, was `API-Reference.md` updated? If `Cargo.toml` members changed, was `Architecture.md` updated? |
-| **Changelog Enforcement** | Custom script | ⚠️ | ❌ | Warns if `*.rs` files changed but `CHANGELOG.md` wasn't updated. |
+| **Docs Drift Detection** | Custom script | ✅ | ✅ | Fails if routes → `API-Reference.md`, `Cargo.toml` members → `Architecture.md`, `config.rs` → `Configuration.md`, or workflow files → `PR-Reviews.md` are changed without updating the corresponding docs. |
+| **Changelog Enforcement** | Custom script | ✅ | ❌ | Fails if `.rs`, workflow (`.yml`), or `Cargo.toml` files changed but `CHANGELOG.md` wasn't updated. |
 | **Broken External Links** | lychee | ⚠️ | ❌ | Checks external URLs in markdown files for 404s. |
 
 #### Semantic Checks (LLM-Based — Only When `docs/` Modified)

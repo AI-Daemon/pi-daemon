@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dynamic Check Gate system — discovers all PR checks automatically, no hardcoded names (#63/#65)
 - Manual re-trigger for Check Gate via `workflow_dispatch` (#60/#61)
 
+### Fixed
+- Docs Drift check now covers workflow file changes and fails instead of only warning (#69)
+- Changelog check now covers workflow and Cargo.toml changes, not just `.rs` files (#69)
+- Check quality checks use `exit 1` instead of `::warning::` so they actually block PRs (#69)
+
 ### Infrastructure
 - Workspace-based Rust project structure with 5 crates
 - GitHub Actions workflows for security, testing, and quality assurance
