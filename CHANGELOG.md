@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Manual re-trigger for Check Gate via `workflow_dispatch` (#60/#61)
 
 ### Fixed
+- Daemon no longer becomes unresponsive under sustained HTTP load (#86)
+- Added concurrency limit (256 max in-flight requests) to prevent tokio runtime exhaustion (#86)
+- Added 30s HTTP request timeout to drop stalled connections (#86)
+- Enabled SO_REUSEADDR for faster port re-binding after crash/restart (#86)
 - CI workflow permissions: added `pull-requests: write` so coverage, binary size, and PR report comments can post (#90)
 - WebSocket connections now cleaned up promptly on abrupt client disconnect (#87)
 - Added RAII `ConnectionGuard` so per-IP connection count is always decremented on drop (#87)

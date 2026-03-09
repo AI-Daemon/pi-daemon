@@ -8,10 +8,23 @@ use pi_daemon_kernel::PiDaemonKernel;
 use pi_daemon_types::config::DaemonConfig;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
+use tower::limit::ConcurrencyLimitLayer;
 use tower_http::compression::CompressionLayer;
 use tower_http::cors::CorsLayer;
+use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 use tracing::info;
+
+/// Maximum number of in-flight requests the server will handle concurrently.
+/// Requests beyond this limit are queued (backpressure). This prevents the
+/// tokio runtime from being overwhelmed by unbounded concurrent handlers.
+const MAX_CONCURRENT_REQUESTS: usize = 256;
+
+/// HTTP request timeout. If a request (including response body) takes longer
+/// than this, the connection is dropped with 408 Request Timeout. This prevents
+/// stalled connections from accumulating under load.
+const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Build the full API router.
 pub fn build_router(kernel: Arc<PiDaemonKernel>, config: DaemonConfig) -> (Router, Arc<AppState>) {
@@ -50,12 +63,23 @@ pub fn build_router(kernel: Arc<PiDaemonKernel>, config: DaemonConfig) -> (Route
         .allow_methods(tower_http::cors::Any)
         .allow_headers(tower_http::cors::Any);
 
+    // Layer order matters (outermost first):
+    // 1. ConcurrencyLimit — bounds in-flight requests to prevent runtime exhaustion
+    // 2. Timeout — drops requests that take too long, freeing concurrency slots
+    // 3. Compression — applied to response bodies
+    // 4. CORS — adds headers
+    // 5. Trace — logs request/response
     let router = Router::new()
         .merge(api_routes)
         .merge(webchat_routes)
         .layer(CompressionLayer::new())
         .layer(cors)
         .layer(TraceLayer::new_for_http())
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            HTTP_REQUEST_TIMEOUT,
+        ))
+        .layer(ConcurrencyLimitLayer::new(MAX_CONCURRENT_REQUESTS))
         .with_state(state.clone());
 
     (router, state)
@@ -68,7 +92,14 @@ pub async fn run_daemon(kernel: Arc<PiDaemonKernel>, config: DaemonConfig) -> an
 
     info!("pi-daemon listening on http://{addr}");
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let socket = tokio::net::TcpSocket::new_v4()?;
+
+    // Enable SO_REUSEADDR so the port can be re-bound quickly after a crash
+    // or restart (avoids TIME_WAIT blocking).
+    socket.set_reuseaddr(true)?;
+
+    socket.bind(addr)?;
+    let listener = socket.listen(1024)?;
 
     axum::serve(
         listener,
@@ -98,8 +129,17 @@ mod tests {
         // Verify state is properly initialized
         assert_eq!(state.config.listen_addr, config.listen_addr);
         assert_eq!(state.config.default_model, config.default_model);
+    }
 
-        // Router should be non-null (can't easily test much more without integration)
-        // The actual routes are tested in integration tests
+    #[test]
+    fn test_server_constants_are_reasonable() {
+        // Use runtime values to avoid clippy::assertions_on_constants
+        let max_concurrent: usize = MAX_CONCURRENT_REQUESTS;
+        let timeout_secs: u64 = HTTP_REQUEST_TIMEOUT.as_secs();
+
+        assert!(max_concurrent >= 64, "Concurrency limit too low");
+        assert!(max_concurrent <= 4096, "Concurrency limit too high");
+        assert!(timeout_secs >= 5, "Timeout too short");
+        assert!(timeout_secs <= 120, "Timeout too long");
     }
 }
