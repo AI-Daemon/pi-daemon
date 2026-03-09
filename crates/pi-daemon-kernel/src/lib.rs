@@ -1,3 +1,7 @@
 //! Agent kernel — registry, event bus, config, lifecycle management.
 
-// TODO(#5): Add kernel — PiDaemonKernel, AgentRegistry, EventBus
+pub mod event_bus;
+pub mod kernel;
+pub mod registry;
+
+pub use kernel::PiDaemonKernel;
