@@ -49,7 +49,7 @@ jobs:
       - name: "Smoke: Start daemon in foreground"
         run: |
           echo "Starting pi-daemon in foreground..."
-          timeout 300 ./target/release/pi-daemon start --foreground &
+          ./target/release/pi-daemon start --foreground &
           DAEMON_PID=$!
           echo "DAEMON_PID=$DAEMON_PID" >> $GITHUB_ENV
           echo "Daemon PID: $DAEMON_PID"
@@ -300,7 +300,7 @@ jobs:
             echo "::warning::Memory measurement failed - see issue #85"
           fi
 
-      # ─── Phase 3: Stress & Recovery Testing ─────────────
+      # ─── Phase 3: Stress Testing ─────────────
 
       - name: "Stress: Sustained load test"
         run: |
@@ -348,13 +348,16 @@ jobs:
           }
           
           echo "Killing daemon (PID $DAEMON_PID) with SIGKILL..."
+          # Kill the process and any children in its process group
           kill -9 $DAEMON_PID 2>/dev/null || true
+          # Also kill by name as a safety measure
+          pkill -9 -f "pi-daemon start" 2>/dev/null || true
           
           # Wait for process to actually exit
           echo "Waiting for process to exit..."
           for i in $(seq 1 10); do
             if ! kill -0 $DAEMON_PID 2>/dev/null; then
-              echo "✅ Process exited after ${i}s"
+              echo "✅ Process $DAEMON_PID exited after ${i}s"
               break
             fi
             sleep 1
@@ -364,22 +367,22 @@ jobs:
           echo "Cleaning up stale state..."
           rm -f ~/.pi-daemon/daemon.json 2>/dev/null || true
           
-          # Wait for port to be truly free (handle TIME_WAIT state)
-          echo "Waiting for port to be free..."
-          for i in $(seq 1 15); do
-            if ! curl -sf http://127.0.0.1:4200/api/health >/dev/null 2>&1; then
-              echo "✅ Port freed after ${i}s"
+          # Wait for port to be truly free using ss
+          echo "Waiting for port 4200 to be free..."
+          for i in $(seq 1 20); do
+            if ! ss -tlnp 2>/dev/null | grep -q ":4200 "; then
+              echo "✅ Port 4200 free after ${i}s"
               break
             fi
-            if [ $i -eq 15 ]; then
-              echo "⚠️ Port still responding after 15s, proceeding anyway"
-              # Don't fail - sometimes takes longer for port to be released
+            if [ $i -eq 20 ]; then
+              echo "⚠️ Port 4200 still bound after 20s:"
+              ss -tlnp 2>/dev/null | grep ":4200 " || true
+              echo "Attempting to kill lingering process..."
+              fuser -k 4200/tcp 2>/dev/null || true
+              sleep 2
             fi
             sleep 1
           done
-
-          # Additional wait for any lingering TIME_WAIT state
-          sleep 2
 
           # Wait longer for port to be completely free (handle TIME_WAIT properly)
           echo "Waiting for port 4200 to be completely free..."
@@ -400,7 +403,7 @@ jobs:
 
           # Restart daemon on same port (4200) - this is how it works in production
           echo "Restarting daemon on original port 4200..."
-          timeout 300 ./target/release/pi-daemon start --foreground &
+          ./target/release/pi-daemon start --foreground &
           NEW_PID=$!
           echo "DAEMON_PID=$NEW_PID" >> $GITHUB_ENV
           echo "New daemon PID: $NEW_PID"
@@ -479,6 +482,7 @@ jobs:
             if [ $i -eq 15 ]; then
               echo "⚠️ Daemon didn't stop gracefully within 15s, force killing"
               kill -9 $DAEMON_PID 2>/dev/null || true
+              pkill -9 -f "pi-daemon start" 2>/dev/null || true
             fi
             sleep 1
           done
