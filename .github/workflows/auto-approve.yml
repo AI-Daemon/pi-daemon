@@ -1,37 +1,25 @@
-name: Auto-Approve on All Checks Passed
+name: "Check Gate"
 
-# Triggers when any check suite or workflow run completes on a PR.
-# If ALL required checks have passed, it submits an approving review.
-# This satisfies the "1 required review" branch protection rule,
-# allowing agent-opened PRs to merge without human intervention
-# while still requiring all CI checks to pass.
+# Dynamic auto-approve system — no hardcoded check names.
+# Discovers all checks via paginated API, tracks their status,
+# and approves when every check reaches a terminal state (pass/skip).
+#
+# Triggers:
+#   1. check_suite:completed — fires each time a workflow finishes
+#   2. workflow_dispatch      — manual re-trigger escape hatch
 #
 # NOTE: GitHub always runs workflow files from the DEFAULT BRANCH (main),
-# not from the PR branch. Changes to this file in a PR will NOT take
-# effect until the PR is merged. This is a GitHub Actions limitation.
+# not from the PR branch. Changes here won't take effect until merged.
 
 on:
-  # Manual trigger — escape hatch when event-driven triggers miss a PR.
-  # Usage: gh workflow run auto-approve.yml -f pr_number=59
+  check_suite:
+    types: [completed]
   workflow_dispatch:
     inputs:
       pr_number:
-        description: 'PR number to auto-approve (checks must still pass)'
+        description: 'PR number to evaluate (checks must still pass)'
         required: true
         type: number
-  # Fires when a workflow run (check suite) completes
-  check_suite:
-    types: [completed]
-  # Also fires on individual workflow completions for reliability
-  workflow_run:
-    workflows:
-      - "CI"
-      - "Security"
-      - "Commit Message Secret Scan"
-      - "PR Hygiene"
-      - "Documentation"
-      - "Architectural Review"
-    types: [completed]
 
 permissions:
   pull-requests: write
@@ -39,233 +27,174 @@ permissions:
   contents: read
 
 jobs:
-  auto-approve:
-    name: Auto-approve if all checks pass
+  gate:
+    name: "Check Gate"
     runs-on: ubuntu-latest
-    # Only run for PRs (or manual dispatch with a pr_number)
+    # Run for PRs or manual dispatch
     if: >-
       (github.event_name == 'workflow_dispatch') ||
-      (github.event.check_suite.pull_requests[0] != null) ||
-      (github.event.workflow_run.pull_requests[0] != null)
+      (github.event.check_suite.pull_requests[0] != null)
+    concurrency:
+      group: check-gate-${{ github.event.inputs.pr_number || github.event.check_suite.pull_requests[0].number }}
+      cancel-in-progress: false
     steps:
-      - name: Get PR number
-        id: pr
+      - name: Evaluate PR checks
         uses: actions/github-script@v7
         with:
           script: |
-            let prNumber;
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
 
-            // Manual dispatch — pr_number provided as input
+            // ── 1. Resolve PR number ──────────────────────────────
+            let prNumber;
             const inputPR = '${{ github.event.inputs.pr_number }}';
             if (inputPR && inputPR !== '') {
               prNumber = parseInt(inputPR);
-              core.info(`Manual dispatch for PR #${prNumber}`);
+              core.info(`🔧 Manual dispatch for PR #${prNumber}`);
             } else if (context.payload.check_suite) {
               const prs = context.payload.check_suite.pull_requests;
-              if (prs && prs.length > 0) {
-                prNumber = prs[0].number;
-              }
-            } else if (context.payload.workflow_run) {
-              const prs = context.payload.workflow_run.pull_requests;
-              if (prs && prs.length > 0) {
-                prNumber = prs[0].number;
-              }
+              if (prs && prs.length > 0) prNumber = prs[0].number;
             }
-
             if (!prNumber) {
-              core.info('No PR associated with this event — skipping');
+              core.info('No PR associated — skipping');
+              return;
+            }
+            core.info(`\n📋 Evaluating PR #${prNumber}`);
+
+            // ── 2. Get PR head SHA ────────────────────────────────
+            const { data: pr } = await github.rest.pulls.get({
+              owner, repo, pull_number: prNumber,
+            });
+            if (pr.state !== 'open') {
+              core.info(`PR #${prNumber} is ${pr.state} — skipping`);
+              return;
+            }
+            const sha = pr.head.sha;
+            core.info(`Head SHA: ${sha}`);
+
+            // ── 3. Fetch ALL check runs (paginated) ───────────────
+            const allRuns = await github.paginate(
+              github.rest.checks.listForRef,
+              { owner, repo, ref: sha, per_page: 100 },
+              (resp) => resp.data.check_runs
+            );
+            core.info(`Found ${allRuns.length} total check runs`);
+
+            // ── 4. Filter out our own check run ───────────────────
+            const SELF_NAMES = ['Check Gate'];
+            const tracked = allRuns.filter(r => !SELF_NAMES.includes(r.name));
+            core.info(`Tracking ${tracked.length} checks (excluded self)\n`);
+
+            // ── 5. Minimum check threshold ────────────────────────
+            // Prevent premature approval when very few checks have
+            // registered. This is the ONLY tunable — not a name list.
+            const MIN_CHECKS = 20;
+            if (tracked.length < MIN_CHECKS) {
+              core.info(`⏳ Only ${tracked.length} checks found (need ≥${MIN_CHECKS}) — too early`);
               return;
             }
 
-            core.setOutput('number', prNumber);
-            core.info(`PR #${prNumber}`);
+            // ── 6. Classify every check ───────────────────────────
+            const pending   = [];
+            const running   = [];
+            const passed    = [];
+            const failed    = [];
+            const skipped   = [];
+            const cancelled = [];
 
-      - name: Check all required status checks
-        id: checks
-        if: steps.pr.outputs.number
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const prNumber = parseInt('${{ steps.pr.outputs.number }}');
-
-            // Get the PR to find the head SHA
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber,
-            });
-
-            const headSha = pr.head.sha;
-            core.info(`Head SHA: ${headSha}`);
-
-            // Get all check runs for this commit
-            const { data: checkRuns } = await github.rest.checks.listForRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: headSha,
-            });
-
-            // Required checks — these must all pass for auto-approve.
-            // This list includes ALL blocking checks so we never
-            // approve before any job finishes. Updated to match actual CI output.
-            const requiredChecks = [
-              // Security workflows
-              // NOTE: 'Secrets Scan' and 'Credential Patterns' are intentionally
-              // excluded — GitHub's Checks API (checks.listForRef) never returns
-              // them for the PR head SHA, causing permanent "not started yet" state.
-              // They are still caught by the fail-safe sweep below that rejects
-              // approval if ANY check run has conclusion === 'failure'.
-              'Scan commit messages for secrets',
-              // Core CI jobs
-              'Lint',
-              'Security Audit',
-              'Minimum Supported Rust Version',
-              'PR Report',
-              'Code Coverage',
-              'Integration Tests',
-              // Build jobs
-              'Build (aarch64-apple-darwin)',
-              'Build (x86_64-unknown-linux-gnu)',
-              'build',
-              // Unit tests
-              'Unit Tests (pi-daemon-api)',
-              'Unit Tests (pi-daemon-cli)', 
-              'Unit Tests (pi-daemon-kernel)',
-              'Unit Tests (pi-daemon-types)',
-              // Supply chain & docs
-              'License & Supply Chain',
-              'Unused Dependencies',
-              'Crate Docs Sync',
-              // Code quality checks
-              'Unsafe Code',
-              'TODO Tracker',
-              'Docs Drift',
-              'Changelog',
-              'Binary Size',
-              // Documentation checks
-              'Link Check',
-              'Markdown Lint',
-              'Sidebar Sync',
-              // PR hygiene
-              'Commit Messages',
-              'PR Description', 
-              'PR Size',
-              // Architecture review
-              'Architecture Review',
-              'Architectural Review',
-            ];
-
-            // Build map of actual check results
-            const results = {};
-            for (const run of checkRuns.check_runs) {
-              results[run.name] = {
-                status: run.status,
-                conclusion: run.conclusion,
-              };
-            }
-
-            core.info('All check results:');
-            let allPassed = true;
-            let anyPending = false;
-            let requiredCount = 0;
-            let passedCount = 0;
-
-            // Check required checks first
-            for (const name of requiredChecks) {
-              const result = results[name];
-              requiredCount++;
-              
-              if (!result) {
-                core.info(`  ⏳ ${name}: not started yet`);
-                anyPending = true;
-                allPassed = false;
-              } else if (result.status !== 'completed') {
-                core.info(`  ⏳ ${name}: ${result.status}`);
-                anyPending = true;
-                allPassed = false;
-              } else if (result.conclusion !== 'success') {
-                core.info(`  ❌ ${name}: ${result.conclusion}`);
-                allPassed = false;
+            for (const run of tracked) {
+              if (run.status !== 'completed') {
+                if (run.status === 'in_progress') running.push(run);
+                else pending.push(run);
               } else {
-                core.info(`  ✅ ${name}: passed`);
-                passedCount++;
+                switch (run.conclusion) {
+                  case 'success':   passed.push(run);    break;
+                  case 'failure':   failed.push(run);    break;
+                  case 'skipped':   skipped.push(run);   break;
+                  case 'cancelled': cancelled.push(run); break;
+                  // neutral, action_required, timed_out, stale
+                  default:          failed.push(run);    break;
+                }
               }
             }
 
-            // Verify NO check has failed (including ones not in required list)
-            let failedChecks = [];
-            for (const run of checkRuns.check_runs) {
-              if (run.status === 'completed' && run.conclusion === 'failure') {
-                core.info(`  ❌ ${run.name}: FAILED`);
-                failedChecks.push(run.name);
-                allPassed = false;
+            // ── 7. Log status table ───────────────────────────────
+            const icon = (r) => {
+              if (r.status !== 'completed') return r.status === 'in_progress' ? '🔄' : '⏳';
+              switch (r.conclusion) {
+                case 'success':  return '✅';
+                case 'failure':  return '❌';
+                case 'skipped':  return '⏭️';
+                default:         return '⚠️';
               }
+            };
+
+            // Sort: failures first, then running, pending, passed, skipped
+            const sorted = [...failed, ...running, ...pending, ...cancelled, ...passed, ...skipped];
+            for (const run of sorted) {
+              const status = run.status !== 'completed'
+                ? run.status
+                : run.conclusion;
+              core.info(`  ${icon(run)} ${run.name}: ${status}`);
             }
 
-            core.info(`Summary: ${passedCount}/${requiredCount} required checks passed`);
-            if (failedChecks.length > 0) {
-              core.info(`Failed checks: ${failedChecks.join(', ')}`);
+            core.info('');
+            core.info(`📊 Summary: ${tracked.length} checks`);
+            core.info(`   ✅ Passed:    ${passed.length}`);
+            core.info(`   ❌ Failed:    ${failed.length}`);
+            core.info(`   ⏭️  Skipped:   ${skipped.length}`);
+            core.info(`   🔄 Running:   ${running.length}`);
+            core.info(`   ⏳ Pending:   ${pending.length}`);
+            if (cancelled.length > 0) {
+              core.info(`   🚫 Cancelled: ${cancelled.length}`);
             }
 
-            if (anyPending) {
-              core.info('✋ Some checks still pending — skipping auto-approve for now');
-              core.setOutput('approve', 'false');
-            } else if (failedChecks.length > 0) {
-              core.info(`❌ ${failedChecks.length} checks failed — not approving`);
-              core.setOutput('approve', 'false');
-            } else if (passedCount < requiredCount * 0.9) {
-              // Allow up to 10% of required checks to be missing (for future flexibility)
-              core.info(`⚠️ Only ${passedCount}/${requiredCount} required checks found — may be configuration issue`);
-              core.setOutput('approve', 'false');
-            } else if (allPassed) {
-              core.info('🎉 All checks passed! Ready for auto-approve');
-              core.setOutput('approve', 'true');
-            } else {
-              core.info('❓ Unknown state — not approving');
-              core.setOutput('approve', 'false');
+            // ── 8. Decision ───────────────────────────────────────
+            const incomplete = running.length + pending.length;
+            if (incomplete > 0) {
+              core.info(`\n✋ ${incomplete} checks still in progress — waiting`);
+              return;
             }
 
-      - name: Check for existing approval
-        id: existing
-        if: steps.checks.outputs.approve == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const prNumber = parseInt('${{ steps.pr.outputs.number }}');
+            if (failed.length > 0) {
+              core.info(`\n❌ ${failed.length} checks failed — not approving`);
+              core.info(`   Failed: ${failed.map(r => r.name).join(', ')}`);
+              return;
+            }
 
+            if (cancelled.length > 0) {
+              core.info(`\n🚫 ${cancelled.length} checks cancelled — not approving`);
+              core.info(`   Cancelled: ${cancelled.map(r => r.name).join(', ')}`);
+              return;
+            }
+
+            // All checks terminal, none failed
+            core.info(`\n🎉 All ${tracked.length} checks passed!`);
+
+            // ── 9. Check for existing approval ────────────────────
             const { data: reviews } = await github.rest.pulls.listReviews({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber,
+              owner, repo, pull_number: prNumber,
             });
-
-            const botApproval = reviews.find(r =>
+            const alreadyApproved = reviews.some(r =>
               r.user.login === 'github-actions[bot]' &&
               r.state === 'APPROVED'
             );
-
-            if (botApproval) {
-              core.info('Already approved by github-actions[bot] — skipping');
-              core.setOutput('already_approved', 'true');
-            } else {
-              core.setOutput('already_approved', 'false');
+            if (alreadyApproved) {
+              core.info('Already approved — skipping duplicate review');
+              return;
             }
 
-      - name: Submit approving review
-        if: >-
-          steps.checks.outputs.approve == 'true' &&
-          steps.existing.outputs.already_approved == 'false'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const prNumber = parseInt('${{ steps.pr.outputs.number }}');
-
+            // ── 10. Approve ──────────────────────────────────────
             await github.rest.pulls.createReview({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber,
+              owner, repo, pull_number: prNumber,
               event: 'APPROVE',
-              body: '✅ **Auto-approved** — all CI checks passed.\n\n*Automated review by github-actions[bot]*',
+              body: [
+                '✅ **Auto-approved** — all CI checks passed.',
+                '',
+                `${passed.length} passed, ${skipped.length} skipped, 0 failed (${tracked.length} total)`,
+                '',
+                '*Automated review by Check Gate*',
+              ].join('\n'),
             });
 
-            core.info(`Approved PR #${prNumber}`);
+            core.info(`✅ Approved PR #${prNumber}`);
