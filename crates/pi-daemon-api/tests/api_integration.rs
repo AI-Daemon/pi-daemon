@@ -226,4 +226,3 @@ async fn test_invalid_agent_id_handling() {
         .unwrap();
     assert_eq!(response.status(), 400);
 }
-
