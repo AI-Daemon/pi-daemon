@@ -35,6 +35,7 @@ pub fn build_router(kernel: Arc<PiDaemonKernel>, config: DaemonConfig) -> (Route
         )
         .route("/api/events", axum::routing::get(routes::get_events))
         .route("/api/health", axum::routing::get(routes::health_check))
+        .route("/api/shutdown", axum::routing::post(routes::shutdown))
         .route("/ws/{agent_id}", axum::routing::get(ws::ws_upgrade))
         .route(
             "/v1/chat/completions",

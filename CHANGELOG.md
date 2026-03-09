@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - WebSocket streaming chat handler with real-time messaging (#8)
 - Embedded webchat SPA with Alpine.js and responsive design (#9)
 - OpenAI-compatible `/v1/chat/completions` endpoint with streaming support (#10)
+- CLI daemon lifecycle commands: start/stop/status/chat/config (#11)
 - Comprehensive CI/CD pipeline with 25+ automated checks (#24)
 - Supply chain security checks with cargo-deny (#34)
 - Code quality checks: unsafe detection, TODO tracking, docs drift, binary size (#35)

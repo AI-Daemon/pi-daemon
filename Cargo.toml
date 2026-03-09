@@ -60,6 +60,10 @@ tokio-tungstenite = "0.24"
 # Async streams
 async-stream = "0.3"
 
+# CLI testing
+assert_cmd = "2"
+predicates = "3"
+
 # Async
 async-trait = "0.1"
 futures = "0.3"

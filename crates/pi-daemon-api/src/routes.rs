@@ -134,6 +134,18 @@ pub async fn health_check() -> impl IntoResponse {
     Json(serde_json::json!({"status": "ok"}))
 }
 
+/// POST /api/shutdown — graceful shutdown.
+pub async fn shutdown(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    tracing::info!("Shutdown requested via API");
+
+    // Trigger graceful shutdown
+    state.shutdown_notify.notify_one();
+
+    Json(serde_json::json!({
+        "message": "Shutdown initiated"
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
