@@ -302,12 +302,13 @@ jobs:
       - name: Check for docs drift
         run: |
           CHANGED=$(git diff origin/main...HEAD --name-only)
+          ERRORS=""
           WARNINGS=""
           
           # routes changed → API-Reference.md should too
           if echo "$CHANGED" | grep -q 'routes'; then
             if ! echo "$CHANGED" | grep -q 'API-Reference.md'; then
-              WARNINGS="${WARNINGS}\n⚠️ Route files changed but docs/API-Reference.md was not updated"
+              ERRORS="${ERRORS}\n❌ Route files changed but docs/API-Reference.md was not updated"
             fi
           fi
           
@@ -315,7 +316,7 @@ jobs:
           if echo "$CHANGED" | grep -q 'Cargo.toml'; then
             if git diff origin/main...HEAD -- Cargo.toml | grep -q 'members'; then
               if ! echo "$CHANGED" | grep -q 'Architecture.md'; then
-                WARNINGS="${WARNINGS}\n⚠️ Cargo.toml workspace members changed but docs/Architecture.md was not updated"
+                ERRORS="${ERRORS}\n❌ Cargo.toml workspace members changed but docs/Architecture.md was not updated"
               fi
             fi
           fi
@@ -323,12 +324,34 @@ jobs:
           # Config types changed → Configuration.md should too
           if echo "$CHANGED" | grep -q 'config\.rs'; then
             if ! echo "$CHANGED" | grep -q 'Configuration.md'; then
-              WARNINGS="${WARNINGS}\n⚠️ Config code changed but docs/Configuration.md was not updated"
+              ERRORS="${ERRORS}\n❌ Config code changed but docs/Configuration.md was not updated"
+            fi
+          fi
+
+          # Workflow files changed → PR-Reviews.md should too
+          if echo "$CHANGED" | grep -q '\.github/workflows/'; then
+            if ! echo "$CHANGED" | grep -q 'PR-Reviews.md'; then
+              ERRORS="${ERRORS}\n❌ Workflow files changed but docs/PR-Reviews.md was not updated"
+            fi
+          fi
+
+          # deny.toml changed → PR-Reviews.md supply chain section should too
+          if echo "$CHANGED" | grep -q 'deny\.toml'; then
+            if ! echo "$CHANGED" | grep -qE 'PR-Reviews.md|Architecture.md'; then
+              WARNINGS="${WARNINGS}\n⚠️ deny.toml changed but related docs were not updated"
             fi
           fi
           
-          if [ -n "$WARNINGS" ]; then
-            echo "::warning::Potential documentation drift:${WARNINGS}"
+          if [ -n "$ERRORS" ]; then
+            echo -e "Documentation drift detected:${ERRORS}"
+            if [ -n "$WARNINGS" ]; then
+              echo -e "\nAdditional warnings:${WARNINGS}"
+            fi
+            echo "::error::Documentation drift detected — update the relevant docs/ files"
+            exit 1
+          elif [ -n "$WARNINGS" ]; then
+            echo -e "Documentation drift warnings:${WARNINGS}"
+            echo "::warning::Potential documentation drift (advisory)"
           else
             echo "✅ No documentation drift detected"
           fi
@@ -344,11 +367,22 @@ jobs:
       - name: Check changelog updated
         run: |
           CHANGED=$(git diff origin/main...HEAD --name-only)
-          HAS_RS=$(echo "$CHANGED" | grep '\.rs$' || true)
           HAS_CHANGELOG=$(echo "$CHANGED" | grep 'CHANGELOG.md' || true)
           
-          if [ -n "$HAS_RS" ] && [ -z "$HAS_CHANGELOG" ]; then
-            echo "::warning::Rust source files changed but CHANGELOG.md was not updated"
+          # Meaningful changes that warrant a changelog entry
+          HAS_RS=$(echo "$CHANGED" | grep '\.rs$' || true)
+          HAS_WORKFLOWS=$(echo "$CHANGED" | grep '\.github/workflows/' || true)
+          HAS_CARGO=$(echo "$CHANGED" | grep 'Cargo\.toml' || true)
+          
+          HAS_MEANINGFUL=""
+          [ -n "$HAS_RS" ] && HAS_MEANINGFUL="Rust source files"
+          [ -n "$HAS_WORKFLOWS" ] && HAS_MEANINGFUL="${HAS_MEANINGFUL:+$HAS_MEANINGFUL, }workflow files"
+          [ -n "$HAS_CARGO" ] && HAS_MEANINGFUL="${HAS_MEANINGFUL:+$HAS_MEANINGFUL, }Cargo.toml"
+          
+          if [ -n "$HAS_MEANINGFUL" ] && [ -z "$HAS_CHANGELOG" ]; then
+            echo "Changed: $HAS_MEANINGFUL"
+            echo "::error::$HAS_MEANINGFUL changed but CHANGELOG.md was not updated"
+            exit 1
           else
             echo "✅ Changelog check passed"
           fi
