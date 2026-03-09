@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docs Drift check now covers workflow file changes and fails instead of only warning (#69)
 - Changelog check now covers workflow and Cargo.toml changes, not just `.rs` files (#69)
 - Check quality checks use `exit 1` instead of `::warning::` so they actually block PRs (#69)
+- Sandbox test memory monitoring showing unrealistic 1MB usage (#85)
 
 ### Infrastructure
 - Workspace-based Rust project structure with 5 crates

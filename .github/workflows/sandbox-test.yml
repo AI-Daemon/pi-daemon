@@ -31,8 +31,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          # Install jq for JSON parsing
-          sudo apt-get update && sudo apt-get install -y jq
+          # Install jq for JSON parsing and bc for decimal arithmetic
+          sudo apt-get update && sudo apt-get install -y jq bc
           
           # Install websocat for WebSocket testing
           curl -L https://github.com/vi/websocat/releases/download/v1.13.0/websocat.x86_64-unknown-linux-musl \
@@ -281,23 +281,95 @@ jobs:
       - name: "Load: Memory usage check"
         run: |
           echo "Checking memory usage..."
-          # Note: Memory measurement needs fixing (issue #85)
-          RSS_KB=$(ps -o rss= -p $DAEMON_PID 2>/dev/null | tr -d ' ' || echo "0")
-          echo "Raw RSS output: '$RSS_KB'"
           
-          if [ -n "$RSS_KB" ] && [ "$RSS_KB" != "0" ]; then
-            RSS_MB=$((RSS_KB / 1024))
-            echo "Daemon memory usage: ${RSS_MB}MB (${RSS_KB}KB)"
-            
-            if [ "$RSS_MB" -gt 200 ]; then
-              echo "⚠️ Daemon using ${RSS_MB}MB — exceeds 200MB threshold"
-              echo "::warning::High memory usage: ${RSS_MB}MB"
+          # Validate PID first
+          echo "Validating daemon PID: $DAEMON_PID"
+          if [ -z "$DAEMON_PID" ]; then
+            echo "❌ DAEMON_PID not set"
+            exit 1
+          fi
+          
+          # Check if process exists
+          if ! kill -0 $DAEMON_PID 2>/dev/null; then
+            echo "❌ Process $DAEMON_PID not found or not accessible"
+            echo "Checking for pi-daemon processes:"
+            ps aux | grep pi-daemon | grep -v grep || echo "No pi-daemon processes found"
+            exit 1
+          fi
+          echo "✅ Process $DAEMON_PID is alive"
+          
+          # Method 1: RSS via ps (most portable)
+          echo "Method 1: Using ps -o rss"
+          RSS_RAW=$(ps -o rss= -p $DAEMON_PID 2>/dev/null)
+          echo "Raw ps output: '$RSS_RAW'"
+          if [ -n "$RSS_RAW" ]; then
+            RSS_KB=$(echo "$RSS_RAW" | tr -d ' ')
+            RSS_MB=$(echo "scale=1; $RSS_KB / 1024" | bc -l 2>/dev/null || echo "$((RSS_KB / 1024))")
+            echo "RSS method: ${RSS_MB}MB (${RSS_KB}KB)"
+          else
+            echo "⚠️ RSS method failed"
+            RSS_MB="0"
+          fi
+          
+          # Method 2: /proc/PID/status (Linux-specific, more reliable)
+          echo "Method 2: Using /proc/$DAEMON_PID/status"
+          if [ -f "/proc/$DAEMON_PID/status" ]; then
+            VMRSS_LINE=$(grep "^VmRSS:" /proc/$DAEMON_PID/status 2>/dev/null || echo "")
+            if [ -n "$VMRSS_LINE" ]; then
+              VMRSS_KB=$(echo "$VMRSS_LINE" | awk '{print $2}')
+              VMRSS_MB=$(echo "scale=1; $VMRSS_KB / 1024" | bc -l 2>/dev/null || echo "$((VMRSS_KB / 1024))")
+              echo "VmRSS method: ${VMRSS_MB}MB (${VMRSS_KB}KB)"
             else
-              echo "✅ Memory usage: ${RSS_MB}MB"
+              echo "⚠️ VmRSS line not found in /proc/$DAEMON_PID/status"
+              VMRSS_MB="0"
             fi
           else
-            echo "⚠️ Unable to measure memory usage (PID $DAEMON_PID not found)"
-            echo "::warning::Memory measurement failed - see issue #85"
+            echo "⚠️ /proc/$DAEMON_PID/status not found"
+            VMRSS_MB="0"
+          fi
+          
+          # Method 3: Combined process tree memory (in case of child processes)
+          echo "Method 3: Process tree memory"
+          TREE_RSS=$(ps -o rss= --ppid $DAEMON_PID 2>/dev/null | awk '{sum+=$1} END {print sum+0}')
+          TOTAL_RSS=$((RSS_KB + TREE_RSS))
+          TOTAL_MB=$(echo "scale=1; $TOTAL_RSS / 1024" | bc -l 2>/dev/null || echo "$((TOTAL_RSS / 1024))")
+          echo "Process tree total: ${TOTAL_MB}MB (${TOTAL_RSS}KB)"
+          
+          # Choose most reliable measurement
+          if [ "$VMRSS_MB" != "0" ] && [ -n "$VMRSS_MB" ]; then
+            FINAL_MB="$VMRSS_MB"
+            FINAL_KB="$VMRSS_KB"
+            METHOD="VmRSS"
+          elif [ "$RSS_MB" != "0" ] && [ -n "$RSS_MB" ]; then
+            FINAL_MB="$RSS_MB"
+            FINAL_KB="$RSS_KB"
+            METHOD="RSS"
+          else
+            echo "❌ All memory measurement methods failed"
+            echo "Debug: RSS_MB='$RSS_MB', VMRSS_MB='$VMRSS_MB'"
+            exit 1
+          fi
+          
+          echo "Final measurement ($METHOD): ${FINAL_MB}MB (${FINAL_KB}KB)"
+          
+          # Validate measurement is realistic
+          FINAL_MB_INT=$(echo "$FINAL_MB" | cut -d. -f1)
+          if [ "$FINAL_MB_INT" -lt 5 ]; then
+            echo "❌ Memory usage ${FINAL_MB}MB is unrealistically low for a Rust daemon"
+            echo "Expected: 20-50MB minimum (Rust binary + Axum + tokio + assets)"
+            echo "This indicates a measurement error, not actual low usage"
+            exit 1
+          fi
+          
+          # Check thresholds
+          if [ "$FINAL_MB_INT" -gt 200 ]; then
+            echo "⚠️ Daemon using ${FINAL_MB}MB — exceeds 200MB threshold"
+            echo "::warning::High memory usage: ${FINAL_MB}MB"
+          elif [ "$FINAL_MB_INT" -gt 100 ]; then
+            echo "⚠️ Daemon using ${FINAL_MB}MB — higher than expected (20-50MB)"
+            echo "::warning::Above expected range: ${FINAL_MB}MB"
+          else
+            echo "✅ Memory usage within expected range: ${FINAL_MB}MB"
           fi
 
       # ─── Phase 3: Stress Testing ─────────────
@@ -306,9 +378,16 @@ jobs:
         run: |
           echo "Running sustained load test (10 seconds)..."
           
-          # Record baseline memory
+          # Record baseline memory (using reliable method)
           RSS_BEFORE=$(ps -o rss= -p $DAEMON_PID 2>/dev/null | tr -d ' ' || echo "0")
-          echo "Memory before load: $((RSS_BEFORE / 1024))MB"
+          if [ -f "/proc/$DAEMON_PID/status" ]; then
+            VMRSS_BEFORE=$(grep "^VmRSS:" /proc/$DAEMON_PID/status 2>/dev/null | awk '{print $2}' || echo "$RSS_BEFORE")
+            MEMORY_BEFORE="${VMRSS_BEFORE:-$RSS_BEFORE}"
+          else
+            MEMORY_BEFORE="$RSS_BEFORE"
+          fi
+          MEMORY_BEFORE_MB=$(echo "scale=1; $MEMORY_BEFORE / 1024" | bc -l 2>/dev/null || echo "$((MEMORY_BEFORE / 1024))")
+          echo "Memory before load: ${MEMORY_BEFORE_MB}MB (${MEMORY_BEFORE}KB)"
           
           # Send requests continuously for 10 seconds
           timeout 10 bash -c '
@@ -332,17 +411,29 @@ jobs:
           
           # Check memory after load
           RSS_AFTER=$(ps -o rss= -p $DAEMON_PID 2>/dev/null | tr -d ' ' || echo "0")
-          if [ -n "$RSS_AFTER" ] && [ "$RSS_AFTER" != "0" ] && [ -n "$RSS_BEFORE" ] && [ "$RSS_BEFORE" != "0" ]; then
-            GROWTH_KB=$((RSS_AFTER - RSS_BEFORE))
-            GROWTH_MB=$((GROWTH_KB / 1024))
-            echo "Memory after load: $((RSS_AFTER / 1024))MB (growth: ${GROWTH_MB}MB)"
+          if [ -f "/proc/$DAEMON_PID/status" ]; then
+            VMRSS_AFTER=$(grep "^VmRSS:" /proc/$DAEMON_PID/status 2>/dev/null | awk '{print $2}' || echo "$RSS_AFTER")
+            MEMORY_AFTER="${VMRSS_AFTER:-$RSS_AFTER}"
+          else
+            MEMORY_AFTER="$RSS_AFTER"
+          fi
+          
+          if [ -n "$MEMORY_AFTER" ] && [ "$MEMORY_AFTER" != "0" ] && [ -n "$MEMORY_BEFORE" ] && [ "$MEMORY_BEFORE" != "0" ]; then
+            MEMORY_AFTER_MB=$(echo "scale=1; $MEMORY_AFTER / 1024" | bc -l 2>/dev/null || echo "$((MEMORY_AFTER / 1024))")
+            GROWTH_KB=$((MEMORY_AFTER - MEMORY_BEFORE))
+            GROWTH_MB=$(echo "scale=1; $GROWTH_KB / 1024" | bc -l 2>/dev/null || echo "$((GROWTH_KB / 1024))")
+            echo "Memory after load: ${MEMORY_AFTER_MB}MB (growth: ${GROWTH_MB}MB)"
             
-            if [ "$GROWTH_MB" -gt 50 ]; then
+            # Convert to integer for comparison (remove decimal part)
+            GROWTH_MB_INT=$(echo "$GROWTH_MB" | cut -d. -f1)
+            if [ "$GROWTH_MB_INT" -gt 50 ]; then
               echo "⚠️ Memory grew by ${GROWTH_MB}MB during load test"
               echo "::warning::Potential memory leak: ${GROWTH_MB}MB growth"
             else
               echo "✅ Memory growth acceptable (${GROWTH_MB}MB)"
             fi
+          else
+            echo "⚠️ Unable to measure memory growth (before: ${MEMORY_BEFORE}KB, after: ${MEMORY_AFTER}KB)"
           fi
           echo "✅ Daemon healthy after sustained load"
 

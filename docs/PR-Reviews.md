@@ -160,12 +160,12 @@ The **Sandbox Integration Test** (`sandbox-test.yml`) is a unique workflow that 
 - 50 concurrent HTTP requests to `/api/status`
 - 20 concurrent agent registrations with verification  
 - 5 WebSocket connections within per-IP limits
-- Memory usage monitoring (warns if >200MB)
+- Memory usage monitoring with multi-method measurement (warns if >200MB)
 
 #### Phase 3: Stress & Recovery  
 - 30-second sustained load with memory growth tracking
 - Kill -9 crash simulation followed by restart verification
-- Memory leak detection (warns if >50MB growth during load)
+- Memory leak detection with robust measurement (warns if >50MB growth during load)
 
 #### Phase 4: Graceful Shutdown
 - API shutdown endpoint testing
@@ -185,6 +185,16 @@ The **Sandbox Integration Test** (`sandbox-test.yml`) is a unique workflow that 
 | Signal handling | Ctrl+C/SIGTERM cleanup | ✅ Signal testing |
 | Memory leaks | Only visible under sustained use | ✅ Load testing + monitoring |
 | WebSocket limits | Per-IP enforcement | ✅ Connection limit validation |
+
+### Memory Monitoring
+
+The sandbox test includes comprehensive memory monitoring to detect leaks and validate realistic usage:
+
+- **Multiple measurement methods**: `ps -o rss=` (portable), `/proc/PID/status VmRSS` (Linux, more accurate), process tree totals
+- **Decimal precision**: Uses `bc` for accurate MB calculations instead of integer truncation
+- **Realistic validation**: Fails if memory <5MB (unrealistic for Rust daemon with web framework and assets)
+- **PID validation**: Ensures daemon process exists before attempting measurement
+- **Expected range**: 20-50MB for idle daemon (Rust binary + Axum + tokio + embedded assets)
 
 ### When It Runs
 - **Trigger**: Pull requests that change `crates/**`, `Cargo.toml`, or `Cargo.lock`
