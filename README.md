@@ -22,4 +22,3 @@ Pi stays as the interactive TUI coding agent. pi-daemon runs as a background ser
 ## License
 
 MIT
-# test
