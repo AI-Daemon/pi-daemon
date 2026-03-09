@@ -1,5 +1,6 @@
 # CODEOWNERS file
-# Require review for CI changes
+# Default — require owner approval for all changes
+* @Demonseed-jpg
 
 # GitHub Actions workflows
 .github/workflows/ @Demonseed-jpg
