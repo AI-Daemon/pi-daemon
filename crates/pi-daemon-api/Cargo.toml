@@ -24,3 +24,4 @@ anyhow = { workspace = true }
 
 [dev-dependencies]
 reqwest = { workspace = true }
+tokio-tungstenite = { workspace = true }

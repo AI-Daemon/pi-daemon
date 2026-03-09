@@ -1,3 +1,4 @@
+use crate::ws::ConnectionTracker;
 use pi_daemon_kernel::PiDaemonKernel;
 use pi_daemon_types::config::DaemonConfig;
 use std::sync::Arc;
@@ -13,6 +14,8 @@ pub struct AppState {
     pub config: DaemonConfig,
     /// Shutdown signal — notify to trigger graceful shutdown.
     pub shutdown_notify: Arc<tokio::sync::Notify>,
+    /// WebSocket connection tracker (per-IP connection limits).
+    pub connection_tracker: ConnectionTracker,
 }
 
 impl AppState {
@@ -22,6 +25,7 @@ impl AppState {
             started_at: Instant::now(),
             config,
             shutdown_notify: Arc::new(tokio::sync::Notify::new()),
+            connection_tracker: crate::ws::new_connection_tracker(),
         }
     }
 }

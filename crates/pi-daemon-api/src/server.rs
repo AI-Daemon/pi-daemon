@@ -1,6 +1,7 @@
 use crate::routes;
 use crate::state::AppState;
 use crate::webchat;
+use crate::ws;
 use axum::Router;
 use pi_daemon_kernel::PiDaemonKernel;
 use pi_daemon_types::config::DaemonConfig;
@@ -32,7 +33,8 @@ pub fn build_router(kernel: Arc<PiDaemonKernel>, config: DaemonConfig) -> (Route
             axum::routing::post(routes::agent_heartbeat),
         )
         .route("/api/events", axum::routing::get(routes::get_events))
-        .route("/api/health", axum::routing::get(routes::health_check));
+        .route("/api/health", axum::routing::get(routes::health_check))
+        .route("/ws/{agent_id}", axum::routing::get(ws::ws_upgrade));
 
     // Webchat static files
     let webchat_routes = Router::new().route("/", axum::routing::get(webchat::webchat_page));
@@ -62,12 +64,15 @@ pub async fn run_daemon(kernel: Arc<PiDaemonKernel>, config: DaemonConfig) -> an
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
 
-    axum::serve(listener, router)
-        .with_graceful_shutdown(async move {
-            state.shutdown_notify.notified().await;
-            info!("Graceful shutdown initiated");
-        })
-        .await?;
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        state.shutdown_notify.notified().await;
+        info!("Graceful shutdown initiated");
+    })
+    .await?;
 
     Ok(())
 }
