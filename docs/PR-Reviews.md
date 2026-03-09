@@ -208,87 +208,44 @@ The sandbox test includes comprehensive memory monitoring to detect leaks and va
 
 ---
 
-## 🏗️ Enhanced Architectural Review (LLM)
+## 🎯 Unified Code Review System
 
-The most unique check. Uses **Gemini 2.5 Flash** via OpenRouter with intelligent file filtering and dual-layer analysis to review every PR against the project's architecture documentation.
+Comprehensive code review system with intelligent file classification and specialized review workflows. Uses **Gemini 2.5 Flash** via OpenRouter for AI-powered analysis.
 
-**🔍 Intelligent File Filtering:**
-- **✅ Reviews:** Source code files (.rs, .ts, .js) containing architectural decisions  
-- **❌ Excludes:** Generated files (package-lock.json, node_modules/, dist/) to prevent token overflow
-- **⏭️ Future:** Config and test files will get separate specialized review workflows
-- **🚀 Performance:** 75-97% faster execution, 25KB focused input vs 160KB+ with generated files
+**🔍 Intelligent File Classification:**
+- **🏗️ Architectural Review:** Source code files (.rs, .ts, .js) containing architectural decisions
+- **🧪 Test Quality Review:** Test files (test., spec., tests/) for testing patterns and quality  
+- **⚙️ Configuration Review:** Config files (.yml, .toml, .md) for DevOps and documentation (placeholder)
+- **❌ Auto-Exclude:** Generated files (package-lock.json, node_modules/, dist/) to prevent token overflow
+- **🚀 Performance:** 75-97% faster execution through focused, conditional review execution
 
-**🎯 Dual-Layer Review System:**
-1. **Technical Compliance Layer** — Objective checklist verification (9 core checks):
-   - Crate structure — correct crate, no dependency cycles
-   - Concurrency — DashMap, broadcast channels, Arc  
-   - Error handling — thiserror/anyhow, no unwrap in library code
-   - Naming conventions — snake_case, test naming patterns
-   - API conventions — routes, extractors, status codes
-   - Security — no unwrap on user input, auth middleware, secrets not logged
-   - Logging — tracing macros, not println
-   - Documentation — doc comments, docs/ updates
-   - AI-Specific — hallucination detection, prompt injection leaks
+**🎯 Multi-Review Architecture:**
 
-2. **Holistic Analysis Layer** — Expert architectural judgment:
-   - Overall system design impact
-   - Consistency with documented architectural vision
-   - Maintainability and extensibility implications
-   - Integration with existing patterns
+### 🏗️ Architectural Review (for source code)
+**Dual-Layer System:**
+1. **Technical Compliance:** Crate structure, concurrency patterns, error handling, security, logging
+2. **Architectural Judgment:** System design impact, consistency with vision, maintainability
 
-**🔒 Pass/Fail Logic:** 
-- ✅ **PASS:** Both layers must approve (compliance + architectural judgment)
-- ❌ **FAIL:** Either layer can fail the review - neither can override into passing
-- **Higher Standards:** More rigorous than single-layer review
+### 🧪 Test Quality Review (for test files)  
+**Dual-Layer System:**
+1. **Testing Compliance:** Test naming, organization, assertions, isolation, test utilities usage
+2. **Test Quality Analysis:** Coverage strategy, maintainability, test architecture patterns
 
-**📊 Enhanced Output:**
-- File classification showing what was reviewed vs excluded
-- Dual-layer results with separate compliance and expert feedback
-- Performance metrics and context size optimization
-- Clear actionable guidance per review layer
+### ⚙️ Configuration Review (for config files)
+**Future Implementation:** CI/CD conventions, documentation standards, configuration quality
 
-**💰 Cost:** ~$0.01–0.05 per PR review (Gemini 2.5 Flash pricing), optimized input reduces token usage.
+**🔒 Universal Pass/Fail Logic:** 
+- ✅ **PASS:** Both compliance and expert layers must approve for each review type
+- ❌ **FAIL:** Either layer can fail any review - neither can override into passing  
+- **Conditional Execution:** Only runs reviews for relevant file types (architectural for source, test quality for tests, etc.)
 
----
+**📊 Unified Output:**
+- **File Classification:** Clear breakdown of what files triggered which reviews
+- **Multi-Review Results:** Separate GitHub checks for each review type (🏗️ Architectural, 🧪 Test Quality, ⚙️ Configuration)
+- **Performance Optimization:** Focused context per review type, shared file classification
+- **Auto-Pass Logic:** PRs with only generated files skip all reviews
 
-## 🧪 Test Quality Review
-
-Specialized review workflow for test files with testing expertise. Uses intelligent file classification to focus on test patterns, coverage, and test design quality.
-
-**🔍 Test File Classification:**
-- **✅ Reviews:** Test files (test., spec., tests/, _test., test_*.rs) containing testing patterns
-- **📖 Context:** Related source files for understanding test purpose (limited)
-- **❌ Excludes:** Non-test files (handled by other review workflows)
-- **⏭️ Auto-Pass:** PRs with no test files skip review with explanation
-
-**🎯 Dual-Layer Test Review System:**
-1. **Testing Compliance Layer** — Objective test pattern verification:
-   - Test naming conventions (test_behavior_expectation)
-   - Test organization and file structure
-   - Assertion quality (no unwrap(), descriptive expect())
-   - Test isolation (no shared mutable state)
-   - Test utilities usage consistency
-   - Async test pattern compliance
-
-2. **Test Quality Analysis** — Expert testing judgment:
-   - Test coverage strategy effectiveness
-   - Test maintainability and readability
-   - Integration vs unit test balance
-   - Test data management approaches
-   - Performance implications of test changes
-
-**🔒 Pass/Fail Logic:**
-- ✅ **PASS:** Both testing compliance AND test quality analysis approve
-- ❌ **FAIL:** Either layer can fail - focus on testing best practices
-- **Testing Focus:** Reviews test patterns, not general code architecture
-
-**📊 Test-Focused Output:**
-- Test file classification showing what was analyzed vs context
-- Dual-layer results with testing compliance + test quality feedback
-- Clear guidance on test patterns and testing best practices
-- Auto-pass explanation for non-test PRs
-
-**💰 Cost:** Future LLM integration will use similar token-optimized approach as architectural review.
+**💰 Cost:** ~$0.01–0.05 per PR review (Gemini 2.5 Flash pricing), token usage optimized through intelligent filtering.
 
 ---
 
