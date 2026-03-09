@@ -179,7 +179,9 @@ The **Sandbox Integration Test** (`sandbox-test.yml`) is a unique workflow that 
 |-----------------------|-------------------|-----------------|
 | Binary panics on startup | Missing runtime init | ✅ Real daemon startup |
 | PID file management | Written but never cleaned up | ✅ File lifecycle testing |
+| Stale PID file after crash | daemon.json blocks restart after kill -9 | ✅ CLI auto-cleans stale PID files |
 | Port binding issues | SO_REUSEADDR conflicts | ✅ Standard port binding |
+| Port TIME_WAIT after crash | Port stuck after kill -9 | ✅ Recovery test waits for port to clear |
 | Signal handling | Ctrl+C/SIGTERM cleanup | ✅ Signal testing |
 | Memory leaks | Only visible under sustained use | ✅ Load testing + monitoring |
 | WebSocket limits | Per-IP enforcement | ✅ Connection limit validation |

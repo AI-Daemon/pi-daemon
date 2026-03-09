@@ -22,7 +22,7 @@ Unauthenticated endpoints: `GET /`, `GET /api/health`
 
 | Method | Path | Description | Status Codes |
 |--------|------|-------------|-------------|
-| `GET` | `/api/health` | Health check — returns `{"status": "ok"}` | 200 |
+| `GET` | `/api/health` | Health check — returns `{"status": "ok", "timestamp": "..."}` | 200 |
 | `GET` | `/api/status` | Daemon status: version, uptime, agent count | 200 |
 | `POST` | `/api/shutdown` | Graceful daemon shutdown | 200 |
 
