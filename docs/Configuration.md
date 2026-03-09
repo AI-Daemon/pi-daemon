@@ -2,7 +2,7 @@
 
 ## Config File
 
-pi-daemon reads configuration from `~/.pi-daemon/config.toml`. A default file is created on first run.
+pi-daemon reads configuration from `~/.pi-daemon/config.toml`. A default file is automatically created on first run with commented defaults.
 
 ```
 ~/.pi-daemon/
@@ -13,65 +13,45 @@ pi-daemon reads configuration from `~/.pi-daemon/config.toml`. A default file is
 
 ## Full Config Reference
 
+The current implementation supports these configuration sections:
+
 ```toml
 # pi-daemon configuration
 
-# ── Server ─────────────────────────────────────────────
-# HTTP/WebSocket listen address
+# HTTP server listen address
 listen_addr = "127.0.0.1:4200"
 
-# API key for authenticating HTTP/WebSocket requests
-# Empty = no authentication required (only safe on localhost)
+# API key for authenticating requests (empty = no auth)
 api_key = ""
 
-# Default LLM model for new agents
+# Default LLM model
 default_model = "claude-sonnet-4-20250514"
 
-# ── LLM Providers ─────────────────────────────────────
+# Data directory path (will be created if it doesn't exist)
+data_dir = "/home/user/.pi-daemon/data"
+
 [providers]
+# Anthropic
 anthropic_api_key = ""
 anthropic_base_url = "https://api.anthropic.com"
-
+# OpenAI
 openai_api_key = ""
 openai_base_url = "https://api.openai.com"
-
+# OpenRouter
 openrouter_api_key = ""
-
-# Ollama for local models (no API key needed)
+# Ollama (local)
 ollama_base_url = "http://localhost:11434"
 
-# ── GitHub ─────────────────────────────────────────────
 [github]
-# Personal Access Token for private repo access
-# Required scopes: repo, read:org
+# Personal Access Token — needed for private repo access
+# Scopes: repo, read:org
+# Set via config or GITHUB_TOKEN / GH_TOKEN env var
 personal_access_token = ""
 api_base_url = "https://api.github.com"
 default_owner = ""
-
-# ── Wire Protocol (Phase 5) ───────────────────────────
-[wire]
-enabled = false
-listen_addr = "0.0.0.0:4201"
-shared_secret = ""
-peers = []
-
-# ── Channels (Phase 5) ────────────────────────────────
-[channels.telegram]
-enabled = false
-bot_token = ""
-allowed_users = []
-
-[channels.slack]
-enabled = false
-bot_token = ""
-app_token = ""
-allowed_channels = []
-
-[channels.discord]
-enabled = false
-bot_token = ""
-allowed_guilds = []
 ```
+
+> **Note:** Future phases will add `[wire]`, `[channels]`, and other sections.
 
 ## Environment Variable Overrides
 
@@ -103,6 +83,10 @@ Verify it works:
 pi-daemon start --foreground
 # Look for: "GitHub authenticated as your-username"
 ```
+
+The kernel provides these GitHub APIs:
+- `github::verify_github_auth()` — validate PAT and get user info
+- `github::list_repos()` — list accessible private repositories
 
 ## Security Notes
 
