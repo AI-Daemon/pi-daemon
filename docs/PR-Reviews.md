@@ -19,6 +19,7 @@ Checks fall into two categories:
 |-------|------|:--------:|:-------:|-------------|
 | **Secrets Scan** | TruffleHog | ✅ | ✅ | Scans full diff for leaked API keys, tokens, passwords, private keys. AI agents are prone to committing secrets from context. |
 | **Hardcoded Credentials** | gitleaks / custom grep | ✅ | ✅ | Regex patterns for `sk-ant-`, `ghp_`, `Bearer `, `password = "`, etc. Catches unverified patterns TruffleHog might miss. |
+| **Commit Message Secrets** | Custom script | ✅ | ✅ | Scans all PR commit messages for secret patterns and env dumps. AI agents are prone to dumping `env` output into commit messages. See `commit-msg-scan.yml`. |
 | **SSRF / Private IP** | Custom grep | ⚠️ | ❌ | Scans for hardcoded private IPs, cloud metadata URLs, or localhost in non-test code. Advisory only — some localhost refs are intentional. |
 
 ### 📦 Supply Chain & Dependencies
@@ -158,6 +159,39 @@ The most unique check. Uses **Gemini 2.5 Flash** via OpenRouter to review every 
 **Output:** Comment with per-check pass/fail/skip table + issues list + native GitHub Check (pass/fail).
 
 **Cost:** ~$0.01–0.05 per PR review (Gemini 2.5 Flash pricing).
+
+---
+
+## Branch Protection & Auto-Approve
+
+The `main` branch is protected with the following rules:
+
+- **Require a pull request** — no direct pushes to `main`
+- **Require 1 approving review** — satisfied by the auto-approve bot (see below)
+- **Require status checks to pass** — security scans and commit-message scan must pass
+- **No force-push** — prevents history rewriting on `main`
+- **No deletions** — prevents accidental branch deletion
+
+### Auto-Approve Workflow
+
+The `auto-approve.yml` workflow acts as the required reviewer. When all CI checks on a PR complete successfully, it automatically submits an approving review as `github-actions[bot]`. This allows agent-opened PRs to merge without human intervention while still enforcing that every check passes.
+
+If any check fails, the bot does not approve and the PR cannot be merged.
+
+### Pre-commit Hooks
+
+Local secret scanning is available via [pre-commit](https://pre-commit.com/):
+
+```bash
+pip install pre-commit
+pre-commit install --hook-type pre-commit --hook-type commit-msg
+```
+
+This installs:
+- **gitleaks** — scans staged file content for secrets
+- **check-commit-msg.sh** — scans commit messages for secret patterns and env dumps
+
+Agents can bypass with `--no-verify`, which is why CI scanning is the real backstop.
 
 ---
 
