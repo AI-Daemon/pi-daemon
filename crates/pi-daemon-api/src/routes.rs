@@ -3,6 +3,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::Json;
+use chrono::Utc;
 use pi_daemon_types::agent::{AgentId, AgentKind};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -131,7 +132,10 @@ pub async fn get_events(State(state): State<Arc<AppState>>) -> impl IntoResponse
 
 /// GET /api/health — simple health check.
 pub async fn health_check() -> impl IntoResponse {
-    Json(serde_json::json!({"status": "ok"}))
+    Json(serde_json::json!({
+        "status": "ok",
+        "timestamp": Utc::now().to_rfc3339()
+    }))
 }
 
 /// POST /api/shutdown — graceful shutdown.

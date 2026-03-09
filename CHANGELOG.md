@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Manual re-trigger for Check Gate via `workflow_dispatch` (#60/#61)
 
 ### Fixed
+- Sandbox integration test: fix hanging recovery test and broken pipe errors (#83)
+- CLI detects stale daemon.json after crash and auto-cleans instead of refusing to start (#83)
+- Recovery test properly waits for port to clear after kill -9 (#83)
+- Health endpoint now includes timestamp for cache-busting (#83)
 - Daemon no longer becomes unresponsive under sustained HTTP load (#86)
 - Added concurrency limit (256 max in-flight requests) to prevent tokio runtime exhaustion (#86)
 - Added 30s HTTP request timeout to drop stalled connections (#86)
