@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Comprehensive CI/CD pipeline with 25+ automated checks (#24)
 - Supply chain security checks with cargo-deny (#34)
 - Code quality checks: unsafe detection, TODO tracking, docs drift, binary size (#35)
-- Auto-approve workflow for seamless PR merging (#56/#57)
+- Dynamic Check Gate system — discovers all PR checks automatically, no hardcoded names (#63/#65)
+- Manual re-trigger for Check Gate via `workflow_dispatch` (#60/#61)
 
 ### Infrastructure
 - Workspace-based Rust project structure with 5 crates

@@ -162,19 +162,43 @@ The most unique check. Uses **Gemini 2.5 Flash** via OpenRouter to review every 
 
 ---
 
-## Branch Protection & Auto-Approve
+## Branch Protection & Check Gate
 
 The `main` branch is protected with the following rules:
 
 - **Require a pull request** — no direct pushes to `main`
-- **Require 1 approving review** — satisfied by the auto-approve bot (see below)
+- **Require 1 approving review** — satisfied by the Check Gate bot (see below)
 - **Require status checks to pass** — security scans and commit-message scan must pass
 - **No force-push** — prevents history rewriting on `main`
 - **No deletions** — prevents accidental branch deletion
 
-### Auto-Approve Workflow
+### Check Gate (`auto-approve.yml`)
 
-The `auto-approve.yml` workflow acts as the required reviewer. When all CI checks on a PR complete successfully, it automatically submits an approving review as `github-actions[bot]`. This allows agent-opened PRs to merge without human intervention while still enforcing that every check passes.
+The Check Gate is a **dynamic auto-approve system** that discovers and tracks all PR checks automatically — no hardcoded check names.
+
+**How it works:**
+
+1. Each time a CI workflow completes (`workflow_run` event), the Gate fires
+2. It fetches **all** check runs for the PR head SHA using the paginated Checks API (`github.paginate`)
+3. It self-excludes its own `Check Gate` check run to prevent loops
+4. It classifies every check: pass, fail, skip, running, pending, cancelled
+5. **Decision:**
+   - Any still running/pending → wait (exit, will re-trigger on next workflow completion)
+   - Any failed/cancelled → deny (log details, do not approve)
+   - All terminal + none failed + ≥20 checks present → approve with summary
+6. If approved, submits an approving review as `github-actions[bot]`
+
+**Key properties:**
+- **Zero hardcoded check names** — discovers checks dynamically
+- **Minimum threshold (20)** — prevents premature approval when few checks have registered; this is the only tunable
+- **Concurrency groups** — prevents race conditions from simultaneous triggers
+- **Manual re-trigger** — escape hatch when event-driven triggers fail:
+
+```bash
+gh workflow run auto-approve.yml -f pr_number=66
+```
+
+**Adding new CI checks:** Just add them to any workflow file. The Gate discovers them automatically. No changes to `auto-approve.yml` needed.
 
 If any check fails, the bot does not approve and the PR cannot be merged.
 
