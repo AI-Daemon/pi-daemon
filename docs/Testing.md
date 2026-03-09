@@ -14,6 +14,35 @@ pi-daemon uses a multi-tier testing strategy enforced by CI on every PR. No merg
 | **E2E** | `tests/e2e/*.rs` | After unit | Full daemon boot, HTTP requests, WebSocket flows |
 | **Coverage** | cargo-llvm-cov | After unit | Posted as PR comment |
 | **Security** | cargo-audit | Always | Known vulnerability advisories |
+| **Sandbox** | `.github/workflows/sandbox-test.yml` | On PR | Real binary lifecycle, stress testing, memory monitoring |
+
+## Sandbox Integration Testing
+
+The sandbox test runs the actual compiled `pi-daemon` binary through its full lifecycle:
+
+- **Smoke Tests**: Health checks, API endpoints, webchat loading, PID management
+- **Load Tests**: Concurrent HTTP requests, agent registrations, WebSocket connections  
+- **Memory Monitoring**: Multi-method memory measurement with realistic validation
+- **Stress Testing**: Sustained load testing with memory leak detection
+- **Recovery Testing**: Kill -9 and graceful restart validation
+- **CLI Testing**: Command behavior when daemon is/isn't running
+
+### Memory Monitoring
+
+The sandbox test includes comprehensive memory monitoring:
+
+```bash
+# Multiple measurement methods for reliability
+RSS_METHOD=$(ps -o rss= -p $DAEMON_PID | tr -d ' ')           # Portable
+VMRSS_METHOD=$(grep "^VmRSS:" /proc/$PID/status | awk '{print $2}')  # Linux, accurate
+TREE_METHOD=$(ps -o rss= --ppid $PID | awk '{sum+=$1} END {print sum+0}')  # Include children
+
+# Realistic validation
+# Expected: 20-50MB for Rust daemon (binary + Axum + tokio + assets)
+# Fails if < 5MB (indicates measurement error, not actual efficiency)
+```
+
+The test validates that memory usage is realistic for a Rust daemon with embedded assets and web framework, preventing false positives from measurement errors.
 
 ## Running Tests Locally
 
