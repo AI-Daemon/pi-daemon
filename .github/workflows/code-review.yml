@@ -396,28 +396,28 @@ jobs:
             });
 
   # ─── Code Review Gate ───────────────────────────────────
-  # Summary check for all code reviews
-  code-review-gate:
-    name: Code Review
+  # Required status check for branch protection (must be named "code-review")
+  code-review:
+    name: code-review
     runs-on: ubuntu-latest
     needs: [classify, architectural-review, test-quality-review, configuration-review]
     if: always()
     steps:
-      - name: Check code review results
+      - name: Check all code reviews passed
         run: |
           ARCH_RESULT="${{ needs.architectural-review.result }}"
           TEST_RESULT="${{ needs.test-quality-review.result }}"
           CONFIG_RESULT="${{ needs.configuration-review.result }}"
           
-          echo "Code Review Results:"
-          echo "  Architectural: $ARCH_RESULT"
-          echo "  Test Quality: $TEST_RESULT"
-          echo "  Configuration: $CONFIG_RESULT"
+          echo "Code Review Gate Results:"
+          echo "  🏗️ Architectural: $ARCH_RESULT"
+          echo "  🧪 Test Quality: $TEST_RESULT"  
+          echo "  ⚙️ Configuration: $CONFIG_RESULT"
           
-          # Check if any required review failed
+          # Fail if any actual review failed (skipped is OK)
           if [ "$ARCH_RESULT" = "failure" ] || [ "$TEST_RESULT" = "failure" ] || [ "$CONFIG_RESULT" = "failure" ]; then
-            echo "❌ Code review failed"
+            echo "❌ Code review failed - at least one review type failed"
             exit 1
           else
-            echo "✅ Code review passed"
+            echo "✅ All code reviews passed (passed or skipped appropriately)"
           fi
