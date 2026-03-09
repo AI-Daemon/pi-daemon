@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - CI workflow permissions: added `pull-requests: write` so coverage, binary size, and PR report comments can post (#90)
+- WebSocket connections now cleaned up promptly on abrupt client disconnect (#87)
+- Added RAII `ConnectionGuard` so per-IP connection count is always decremented on drop (#87)
+- Server-initiated WebSocket ping every 15s detects dead connections (#87)
+- Read timeout (60s inactivity) closes zombie connections instead of waiting 30 min (#87)
+- Idle timeout now correctly persists across loop iterations (pinned sleep) (#87)
 - Docs Drift check now covers workflow file changes and fails instead of only warning (#69)
 - Changelog check now covers workflow and Cargo.toml changes, not just `.rs` files (#69)
 - Check quality checks use `exit 1` instead of `::warning::` so they actually block PRs (#69)

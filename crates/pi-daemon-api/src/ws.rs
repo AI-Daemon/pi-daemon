@@ -22,11 +22,19 @@ const MAX_WS_PER_IP: usize = 5;
 /// Idle timeout — close connection after 30 min of no client messages.
 const WS_IDLE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
+/// Read timeout — close connection if no data received within this period.
+/// This catches abrupt disconnects where the TCP connection drops without
+/// a WebSocket close frame.
+const WS_READ_TIMEOUT: Duration = Duration::from_secs(60);
+
 /// Text delta debounce: flush buffer after this many ms.
 const DEBOUNCE_MS: u64 = 100;
 
 /// Text delta debounce: flush buffer when it exceeds this many chars.
 const DEBOUNCE_CHARS: usize = 200;
+
+/// Interval for sending WebSocket ping frames to detect dead connections.
+const WS_PING_INTERVAL: Duration = Duration::from_secs(15);
 
 // --- Protocol types ---
 
@@ -84,6 +92,33 @@ pub fn new_connection_tracker() -> ConnectionTracker {
     Arc::new(DashMap::new())
 }
 
+/// RAII guard that decrements the per-IP connection count when dropped.
+/// This ensures cleanup happens on all exit paths: normal close, error,
+/// panic, or task cancellation.
+struct ConnectionGuard {
+    tracker: ConnectionTracker,
+    ip: std::net::IpAddr,
+}
+
+impl ConnectionGuard {
+    fn new(tracker: ConnectionTracker, ip: std::net::IpAddr) -> Self {
+        Self { tracker, ip }
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        if let Some(mut entry) = self.tracker.get_mut(&self.ip) {
+            *entry = entry.saturating_sub(1);
+            if *entry == 0 {
+                drop(entry); // Release the lock before removing
+                self.tracker.remove(&self.ip);
+            }
+        }
+        info!(ip = %self.ip, "WebSocket connection guard dropped — connection count decremented");
+    }
+}
+
 /// WebSocket upgrade handler.
 ///
 /// Route: GET /ws/:agent_id?api_key=xxx
@@ -122,19 +157,14 @@ pub async fn ws_upgrade(
 
     info!(ip = %ip, agent_id = %agent_id, connections = connection_count, "WebSocket connection starting");
 
-    // Clone the tracker for cleanup on disconnect
-    let tracker = state.connection_tracker.clone();
+    // Create the RAII guard — this will decrement the count when dropped,
+    // regardless of how the handler exits (normal, error, panic, etc.)
+    let guard = ConnectionGuard::new(state.connection_tracker.clone(), ip);
 
     ws.on_upgrade(move |socket| async move {
+        // Move the guard into this future — it will be dropped when the future completes
+        let _guard = guard;
         handle_websocket(socket, agent_id, state, addr).await;
-
-        // Cleanup: decrement connection count
-        if let Some(mut entry) = tracker.get_mut(&ip) {
-            *entry = entry.saturating_sub(1);
-            if *entry == 0 {
-                tracker.remove(&ip);
-            }
-        }
         info!(ip = %ip, "WebSocket connection cleaned up");
     })
     .into_response()
@@ -153,7 +183,19 @@ async fn handle_websocket(
 
     // Text delta buffer for debouncing
     let mut text_buffer = TextDeltaBuffer::new();
-    let mut idle_timer = tokio::time::interval(Duration::from_secs(1));
+    let mut flush_interval = tokio::time::interval(Duration::from_secs(1));
+
+    // Idle timeout: pinned sleep that resets when the client sends a message
+    let idle_deadline = tokio::time::sleep(WS_IDLE_TIMEOUT);
+    tokio::pin!(idle_deadline);
+
+    // Server-initiated ping interval to detect dead connections
+    let mut ping_interval = tokio::time::interval(WS_PING_INTERVAL);
+    // The first tick completes immediately; skip it so we don't ping right away
+    ping_interval.tick().await;
+
+    // Track when we last heard *anything* from the client (data or pong)
+    let mut last_client_activity = tokio::time::Instant::now();
 
     loop {
         tokio::select! {
@@ -161,9 +203,24 @@ async fn handle_websocket(
             msg = receiver.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
+                        // Reset idle timeout on any client message
+                        idle_deadline.as_mut().reset(tokio::time::Instant::now() + WS_IDLE_TIMEOUT);
+                        last_client_activity = tokio::time::Instant::now();
+
                         if let Err(e) = handle_client_message(&text, &mut sender, &state, &agent_id).await {
                             warn!(error = %e, "Error handling client message");
                         }
+                    }
+                    Some(Ok(Message::Pong(_))) => {
+                        // Client responded to our ping — connection is alive
+                        last_client_activity = tokio::time::Instant::now();
+                        debug!(addr = %addr, "Received pong from client");
+                    }
+                    Some(Ok(Message::Ping(data))) => {
+                        // Client sent a ping — respond with pong (axum may auto-reply,
+                        // but explicit handling is safer)
+                        last_client_activity = tokio::time::Instant::now();
+                        let _ = sender.send(Message::Pong(data)).await;
                     }
                     Some(Ok(Message::Close(_))) | None => {
                         info!(addr = %addr, "WebSocket disconnected by client");
@@ -171,16 +228,17 @@ async fn handle_websocket(
                     }
                     Some(Ok(msg)) => {
                         debug!(message = ?msg, "Received non-text WebSocket message");
+                        last_client_activity = tokio::time::Instant::now();
                     }
                     Some(Err(e)) => {
-                        warn!(error = %e, "WebSocket receive error");
+                        warn!(error = %e, addr = %addr, "WebSocket receive error — closing connection");
                         break;
                     }
                 }
             }
 
             // Text buffer flush timer
-            _ = idle_timer.tick() => {
+            _ = flush_interval.tick() => {
                 if text_buffer.should_flush() {
                     if let Some(content) = text_buffer.try_flush() {
                         let msg = ServerMessage::TextDelta { content };
@@ -191,9 +249,33 @@ async fn handle_websocket(
                 }
             }
 
-            // Global idle timeout (no client messages)
-            _ = tokio::time::sleep(WS_IDLE_TIMEOUT) => {
-                info!(addr = %addr, "WebSocket idle timeout");
+            // Server-initiated ping to detect dead connections
+            _ = ping_interval.tick() => {
+                // Check if we've heard from the client recently
+                if last_client_activity.elapsed() > WS_READ_TIMEOUT {
+                    warn!(
+                        addr = %addr,
+                        elapsed_secs = last_client_activity.elapsed().as_secs(),
+                        "WebSocket read timeout — no client activity, closing connection"
+                    );
+                    let _ = sender.send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                        code: axum::extract::ws::close_code::NORMAL,
+                        reason: "Read timeout — no client activity".into(),
+                    }))).await;
+                    break;
+                }
+
+                // Send a ping frame to probe the connection
+                if let Err(e) = sender.send(Message::Ping(vec![].into())).await {
+                    warn!(error = %e, addr = %addr, "Failed to send WebSocket ping — closing connection");
+                    break;
+                }
+                debug!(addr = %addr, "Sent ping to WebSocket client");
+            }
+
+            // Global idle timeout (no client messages for 30 min)
+            _ = &mut idle_deadline => {
+                info!(addr = %addr, "WebSocket idle timeout — no messages for 30 minutes");
                 let _ = sender.send(Message::Close(Some(axum::extract::ws::CloseFrame {
                     code: axum::extract::ws::close_code::NORMAL,
                     reason: "Idle timeout".into(),
@@ -445,6 +527,55 @@ mod tests {
     #[test]
     fn test_connection_tracker_creation() {
         let tracker = new_connection_tracker();
+        assert!(tracker.is_empty());
+    }
+
+    #[test]
+    fn test_connection_guard_decrements_on_drop() {
+        let tracker = new_connection_tracker();
+        let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+
+        // Simulate incrementing the counter (as ws_upgrade does)
+        tracker.insert(ip, 3);
+
+        // Create guard and drop it
+        {
+            let _guard = ConnectionGuard::new(tracker.clone(), ip);
+        }
+
+        // Count should be decremented
+        assert_eq!(*tracker.get(&ip).unwrap(), 2);
+    }
+
+    #[test]
+    fn test_connection_guard_removes_entry_at_zero() {
+        let tracker = new_connection_tracker();
+        let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+
+        // Set count to 1
+        tracker.insert(ip, 1);
+
+        // Create guard and drop it
+        {
+            let _guard = ConnectionGuard::new(tracker.clone(), ip);
+        }
+
+        // Entry should be removed entirely
+        assert!(tracker.get(&ip).is_none());
+        assert!(tracker.is_empty());
+    }
+
+    #[test]
+    fn test_connection_guard_handles_missing_entry() {
+        let tracker = new_connection_tracker();
+        let ip: std::net::IpAddr = "127.0.0.1".parse().unwrap();
+
+        // Don't insert anything — guard should handle gracefully
+        {
+            let _guard = ConnectionGuard::new(tracker.clone(), ip);
+        }
+
+        // Should not panic, tracker should still be empty
         assert!(tracker.is_empty());
     }
 }
