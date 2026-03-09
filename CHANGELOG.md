@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Unified code review system with intelligent file classification and multi-review support (#98, #101, #100, #104)
 - Eliminate duplicate GitHub checks for each review type (#108)
 - All review jobs now always comment with explanatory skip reasons (#106)
+- Pi bridge extension (TypeScript) — connects pi TUI instances to pi-daemon kernel (#12)
 - Comprehensive CI/CD pipeline with 25+ automated checks (#24)
 - Supply chain security checks with cargo-deny (#34)
 - Code quality checks: unsafe detection, TODO tracking, docs drift, binary size (#35)
