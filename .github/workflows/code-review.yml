@@ -198,7 +198,7 @@ jobs:
             await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              name: '🏗️ Architectural Review',
+              name: 'Architectural Review',
               head_sha: context.payload.pull_request.head.sha,
               status: 'completed',
               conclusion: conclusion,
@@ -297,7 +297,7 @@ jobs:
             await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              name: '🧪 Test Quality Review',
+              name: 'Test Quality Review',
               head_sha: context.payload.pull_request.head.sha,
               status: 'completed',
               conclusion: conclusion,
@@ -385,7 +385,7 @@ jobs:
             await github.rest.checks.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              name: '⚙️ Configuration Review',
+              name: 'Configuration Review',
               head_sha: context.payload.pull_request.head.sha,
               status: 'completed',
               conclusion: conclusion,
