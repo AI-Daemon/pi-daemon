@@ -223,7 +223,13 @@ jobs:
               };
             }
 
-            const verdict = review.verdict || 'PASS';
+            // Don't trust the LLM's verdict — compute it from structured output.
+            // If any check has status "fail", the verdict is FAIL regardless of
+            // what the LLM decided. This prevents the model from passing a review
+            // that contains ❌ failures (see #52).
+            const hasFailedCheck = (review.checks || []).some(c => c.status === 'fail');
+            const hasErrorIssue = (review.issues || []).some(i => i.severity === 'error');
+            const verdict = (hasFailedCheck || hasErrorIssue) ? 'FAIL' : (review.verdict || 'PASS');
             const conclusion = verdict === 'PASS' ? 'success' : 'failure';
 
             // Build check run summary

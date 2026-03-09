@@ -1,14 +1,20 @@
 use axum::{routing::get, Router};
 use tokio::net::TcpListener;
 
-/// Test server configuration.
+/// Test server configuration for integration testing.
+///
+/// Provides a lightweight HTTP server with basic endpoints for testing
+/// API interactions and WebSocket functionality.
 pub struct TestServer {
     pub base_url: String,
     pub port: u16,
 }
 
 impl TestServer {
-    /// Start a test HTTP server on a random port with basic health endpoint.
+    /// Start a test HTTP server on a random port with basic endpoints.
+    ///
+    /// The server includes /api/health and /api/status endpoints for testing.
+    /// Returns immediately after starting the server in the background.
     pub async fn new() -> Self {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
@@ -35,12 +41,12 @@ impl TestServer {
     }
 }
 
-/// Basic health check endpoint for testing.
+/// Health check endpoint that returns OK status.
 async fn health_check() -> &'static str {
     r#"{"status":"ok"}"#
 }
 
-/// Basic status endpoint for testing.
+/// Status endpoint with basic daemon information.
 async fn status_check() -> &'static str {
     r#"{"status":"ok","version":"test","uptime_secs":0,"agent_count":0}"#
 }

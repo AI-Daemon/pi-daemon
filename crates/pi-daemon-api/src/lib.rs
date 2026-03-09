@@ -1,9 +1,3 @@
 //! HTTP/WebSocket API server — routes, webchat UI, streaming.
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
-    }
-}
+// TODO(#7): Add API server — Axum routes, WebSocket handlers, embedded webchat UI

@@ -3,6 +3,8 @@ name = "pi-daemon-test-utils"
 version.workspace = true
 edition.workspace = true
 description = "Shared test utilities for pi-daemon"
+# Only used in dev
+publish = false
 
 [dependencies]
 pi-daemon-kernel = { path = "../pi-daemon-kernel" }
@@ -13,6 +15,3 @@ axum = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 serde_json = { workspace = true }
 tempfile = "3"
-
-[dev-dependencies]
-assert_json = "*"
