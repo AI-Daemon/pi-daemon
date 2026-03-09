@@ -1,0 +1,13 @@
+# CODEOWNERS file
+# Require review for CI changes
+
+# GitHub Actions workflows
+.github/workflows/ @Demonseed-jpg
+
+# Test infrastructure
+crates/pi-daemon-test-utils/ @Demonseed-jpg
+tests/ @Demonseed-jpg
+
+# CI configuration files
+deny.toml @Demonseed-jpg
+.markdownlint.json @Demonseed-jpg

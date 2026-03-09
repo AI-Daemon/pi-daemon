@@ -65,6 +65,9 @@ rand = "0.8"
 base64 = "0.22"
 bytes = "1"
 
+# Test dependencies
+tempfile = "3"
+
 [profile.release]
 lto = true
 codegen-units = 1

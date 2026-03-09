@@ -22,4 +22,10 @@ mod tests {
                 .expect("Version parts should be numbers");
         }
     }
+
+    #[test]
+    fn test_version_output() {
+        // Simple test to verify basic functionality
+        assert!(!env!("CARGO_PKG_VERSION").is_empty());
+    }
 }
