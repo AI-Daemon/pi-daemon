@@ -2,6 +2,7 @@
 ///
 /// This macro checks that the response is successful, parses the JSON,
 /// and verifies that the specified key exists in the response.
+/// Note: This consumes the response.
 #[macro_export]
 macro_rules! assert_json_ok {
     ($resp:expr, $key:expr) => {{
@@ -23,17 +24,18 @@ macro_rules! assert_json_ok {
 
 /// Assert response status code matches expected value.
 ///
-/// Provides detailed error message including response body on mismatch.
+/// Only reads the response body on failure for the error message.
+/// Note: This consumes the response.
 #[macro_export]
 macro_rules! assert_status {
     ($resp:expr, $status:expr) => {
-        assert_eq!(
-            $resp.status().as_u16(),
-            $status,
-            "Expected status {}, got {}. Response body: {:?}",
-            $status,
-            $resp.status().as_u16(),
-            $resp.text().await.unwrap_or_default()
-        );
+        let status = $resp.status().as_u16();
+        if status != $status {
+            let body = $resp.text().await.unwrap_or_default();
+            panic!(
+                "Expected status {}, got {}. Response body: {:?}",
+                $status, status, body
+            );
+        }
     };
 }

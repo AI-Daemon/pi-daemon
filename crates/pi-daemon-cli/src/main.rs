@@ -1,7 +1,6 @@
 /// Main entry point for pi-daemon CLI.
 ///
-/// TODO(#50): Implement actual CLI commands after issue #11
-/// This will include start, stop, status, and chat commands.
+/// TODO(#11): Implement CLI commands — start, stop, status, chat
 fn main() {
     println!("pi-daemon v{}", env!("CARGO_PKG_VERSION"));
     println!("CLI implementation pending - see issue #11");
