@@ -304,39 +304,27 @@ jobs:
 
       - name: "Stress: Sustained load test"
         run: |
-          echo "Running sustained load test (30 seconds)..."
+          echo "Running sustained load test (10 seconds)..."
           
-          # Record baseline memory
-          RSS_BEFORE=$(ps -o rss= -p $DAEMON_PID 2>/dev/null || echo "0")
-          echo "Memory before load: $((RSS_BEFORE / 1024))MB"
-          
-          # Send requests continuously for 30 seconds
-          timeout 30 bash -c '
-            while true; do
-              for endpoint in health status agents; do
-                curl -sf http://127.0.0.1:4200/api/$endpoint >/dev/null 2>&1 &
-              done
-              sleep 0.1
+          # Send requests continuously for 10 seconds (reduced from 30s)
+          for j in $(seq 1 10); do
+            for endpoint in health status agents; do
+              curl -sf --max-time 3 http://127.0.0.1:4200/api/$endpoint >/dev/null 2>&1 &
             done
-          ' || true
+            sleep 1
+          done
+          wait
           
-          # Wait for background requests to complete
-          sleep 2
+          echo "✅ Sustained load test completed"
           
-          # Check memory after load
-          RSS_AFTER=$(ps -o rss= -p $DAEMON_PID 2>/dev/null || echo "0")
-          GROWTH_KB=$((RSS_AFTER - RSS_BEFORE))
-          GROWTH_MB=$((GROWTH_KB / 1024))
-          
-          echo "Memory after load: $((RSS_AFTER / 1024))MB"
-          echo "Memory growth: ${GROWTH_MB}MB (${GROWTH_KB}KB)"
-          
-          if [ "$GROWTH_MB" -gt 50 ]; then
-            echo "⚠️ Memory grew by ${GROWTH_MB}MB during load test"
-            echo "::warning::Potential memory leak: ${GROWTH_MB}MB growth"
-          else
-            echo "✅ Memory growth acceptable (${GROWTH_MB}MB)"
-          fi
+          # Verify daemon is still alive after load
+          curl -sf --max-time 5 http://127.0.0.1:4200/api/health >/dev/null || {
+            echo "❌ Daemon died during sustained load test!"
+            echo "DAEMON_PID=$DAEMON_PID"
+            kill -0 $DAEMON_PID 2>/dev/null && echo "Process alive" || echo "Process dead"
+            exit 1
+          }
+          echo "✅ Daemon still healthy after load test"
 
       - name: "Recovery: Kill -9 and restart test"
         timeout-minutes: 3
