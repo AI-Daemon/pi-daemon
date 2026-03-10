@@ -454,6 +454,8 @@ Comprehensive code review system with intelligent file classification and specia
 
 **🔄 Workflow Step Ordering (#166):** Review creation steps are positioned **before** job failure steps to ensure inline comments are posted even when reviews fail. The execution order is: 1) Generate LLM analysis → 2) Create PR review with comments → 3) Fail job if needed. This guarantees authors receive actionable feedback with file/line annotations instead of just CI error messages.
 
+**🎯 Inline Comment Filtering (#172):** LLM-generated inline comments are filtered to only reference lines that exist in the diff. The system parses each review's diff file to extract valid line numbers per file, then splits comments into valid inline comments and invalid ones that are moved to the "File-level feedback" section. This prevents GitHub API "Line could not be resolved" errors when the LLM references unchanged lines outside the diff context.
+
 ---
 
 ## 📊 Metric Commit Statuses (#140)
