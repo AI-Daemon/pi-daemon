@@ -215,7 +215,7 @@ Comprehensive code review system with intelligent file classification and specia
 **🔍 Intelligent File Classification:**
 - **🏗️ Architectural Review:** Source code files (.rs, .ts, .js) containing architectural decisions
 - **🧪 Test Quality Review:** Test files (test., spec., tests/) for testing patterns and quality  
-- **⚙️ Configuration Review:** Config files (.yml, .toml, .md) for DevOps and documentation (placeholder)
+- **⚙️ Configuration Review:** Config files (.yml, .toml, .md) for DevOps and documentation standards
 - **❌ Auto-Exclude:** Generated files (package-lock.json, node_modules/, dist/) to prevent token overflow
 - **🚀 Performance:** 75-97% faster execution through focused, conditional review execution
 
@@ -231,8 +231,10 @@ Comprehensive code review system with intelligent file classification and specia
 1. **Testing Compliance:** Test naming, organization, assertions, isolation, test utilities usage
 2. **Test Quality Analysis:** Coverage strategy, maintainability, test architecture patterns
 
-### ⚙️ Configuration Review (for config files)
-**Future Implementation:** CI/CD conventions, documentation standards, configuration quality
+### ⚙️ Configuration Review (for config files)  
+**Dual-Layer System:**
+1. **Technical Compliance:** YAML syntax, CI/CD naming, documentation format, changelog standards
+2. **DevOps Expert Analysis:** Performance impact, maintainability, documentation clarity, best practices
 
 **🔒 Universal Pass/Fail Logic:** 
 - ✅ **PASS:** Both compliance and expert layers must approve for each review type
