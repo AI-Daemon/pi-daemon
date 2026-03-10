@@ -7,18 +7,22 @@ name: PR Pipeline
 # Dependency graph:
 #   scope-gate
 #       │
-#       ├──→ lint-format ──┬──→ test ──────────→ code-review
-#       │                  │
-#       │                  └──→ build ─────────→ sandbox
-#       │
-#       ├──→ security (parallel with lint)
-#       │
-#       └──→ hygiene (parallel with lint)
+#       ├──→ lint-format ──┬──→ test ──────────→ code-review ──┐
+#       │                  │                                    │
+#       │                  └──→ build ─────────→ sandbox ──────┤
+#       │                                                      │
+#       ├──→ security (parallel with lint) ────────────────────┤
+#       │                                                      │
+#       └──→ hygiene (parallel with lint) ─────────────────────┤
+#                                                              │
+#                                              update-dashboard ◄┘
+#                                              (if: always, needs: ALL)
 #
 # All PR checks live under this single workflow. Post-merge CI on main
 # is handled by ci-main.yml. Auto-approve watches only "PR Pipeline".
 #
 # Phase 4 (#128) — final form.
+# PR Output Layer Phase 4 (#142) — single auto-updating dashboard comment.
 
 on:
   pull_request:
@@ -187,3 +191,258 @@ jobs:
       contents: read
       checks: write
     secrets: inherit
+
+  # ─── PR Status Dashboard ──────────────────────────────────
+  # Single auto-updating PR comment that aggregates all pipeline
+  # results into one place.  Runs if: always() so it fires even
+  # when upstream stages fail, are skipped, or are cancelled.
+  # Always exits 0 — never blocks the pipeline or the Check Gate.
+  update-dashboard:
+    name: Update Dashboard
+    needs: [scope-gate, classify, lint-format, test, security, hygiene, build, code-review, sandbox]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: read
+      statuses: read
+    steps:
+      - name: Build and upsert dashboard comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // ── Always exit 0 — dashboard must never block pipeline ──
+            try {
+              const owner = context.repo.owner;
+              const repo  = context.repo.repo;
+              const prNumber = context.payload.pull_request.number;
+              const sha   = context.payload.pull_request.head.sha;
+              const runId = context.runId;
+              const runUrl = `https://github.com/${owner}/${repo}/actions/runs/${runId}`;
+
+              // ── 1. Job results from needs context ───────────────
+              const needs = ${{ toJSON(needs) }};
+              const stageMap = {
+                'scope-gate':  { emoji: '🔬', label: 'Scope Gate' },
+                'classify':    { emoji: '📂', label: 'Classification' },
+                'lint-format': { emoji: '🧹', label: 'Lint & Format' },
+                'test':        { emoji: '🧪', label: 'Tests' },
+                'security':    { emoji: '🔒', label: 'Security' },
+                'hygiene':     { emoji: '🧹', label: 'Hygiene' },
+                'build':       { emoji: '🏗️', label: 'Build' },
+                'code-review': { emoji: '🤖', label: 'Code Review' },
+                'sandbox':     { emoji: '🏖️', label: 'Sandbox' },
+              };
+
+              const statusIcon = (result) => {
+                switch (result) {
+                  case 'success':   return '✅';
+                  case 'failure':   return '❌';
+                  case 'skipped':   return '⏭️';
+                  case 'cancelled': return '🚫';
+                  default:          return '❓';
+                }
+              };
+
+              // ── 2. Fetch commit statuses (metrics) ──────────────
+              let coverageDesc = '';
+              let binarySizeDesc = '';
+              try {
+                const { data: statuses } = await github.rest.repos.listCommitStatusesForRef({
+                  owner, repo, ref: sha, per_page: 100,
+                });
+                // Statuses are returned newest-first; take first match per context
+                const seen = new Set();
+                for (const s of statuses) {
+                  if (seen.has(s.context)) continue;
+                  seen.add(s.context);
+                  if (s.context === 'coverage') coverageDesc = s.description || '';
+                  if (s.context === 'binary-size') binarySizeDesc = s.description || '';
+                }
+              } catch (e) {
+                core.info(`⚠️ Could not fetch commit statuses: ${e.message}`);
+              }
+
+              // ── 3. Fetch PR reviews (code review verdicts) ──────
+              let reviewSummary = '';
+              try {
+                const { data: reviews } = await github.rest.pulls.listReviews({
+                  owner, repo, pull_number: prNumber,
+                });
+                // Filter to bot reviews with our markers
+                const markers = {
+                  'arch':   '<!-- pi-daemon:arch-review -->',
+                  'test':   '<!-- pi-daemon:test-review -->',
+                  'config': '<!-- pi-daemon:config-review -->',
+                };
+                const verdicts = {};
+                for (const r of reviews) {
+                  if (!r.body) continue;
+                  for (const [key, marker] of Object.entries(markers)) {
+                    if (r.body.includes(marker)) {
+                      // Latest review wins (reviews are chronological)
+                      verdicts[key] = r.state === 'APPROVED' || r.state === 'COMMENTED'
+                        ? 'PASS' : 'CHANGES_REQUESTED' ? 'FAIL' : r.state;
+                    }
+                  }
+                }
+                const parts = [];
+                if (verdicts.arch)   parts.push(`Arch: ${verdicts.arch === 'PASS' ? 'PASS' : 'FAIL'}`);
+                if (verdicts.test)   parts.push(`Test: ${verdicts.test === 'PASS' ? 'PASS' : 'FAIL'}`);
+                if (verdicts.config) parts.push(`Config: ${verdicts.config === 'PASS' ? 'PASS' : 'FAIL'}`);
+                reviewSummary = parts.join(', ');
+              } catch (e) {
+                core.info(`⚠️ Could not fetch reviews: ${e.message}`);
+              }
+
+              // ── 4. Fetch check annotations (security/hygiene) ──
+              let annotationCounts = { error: 0, warning: 0 };
+              try {
+                let allRuns = [];
+                let page = 1;
+                while (true) {
+                  const { data } = await github.rest.checks.listForRef({
+                    owner, repo, ref: sha, per_page: 100, page,
+                  });
+                  allRuns = allRuns.concat(data.check_runs);
+                  if (allRuns.length >= data.total_count) break;
+                  page++;
+                }
+                for (const run of allRuns) {
+                  if (run.output) {
+                    annotationCounts.error   += run.output.annotations_count || 0;
+                  }
+                }
+                // The annotations_count on check runs includes all levels;
+                // for a finer breakdown we'd need listAnnotations per run,
+                // but the count gives a useful signal without extra API calls.
+              } catch (e) {
+                core.info(`⚠️ Could not fetch check runs: ${e.message}`);
+              }
+
+              // ── 5. Scope gate detail (one-line summary) ─────────
+              let scopeDetail = '';
+              const scopeResult = needs['scope-gate']?.result || 'unknown';
+              if (scopeResult === 'success') {
+                // Check for scope gate comment to extract line count
+                try {
+                  const { data: comments } = await github.rest.issues.listComments({
+                    owner, repo, issue_number: prNumber, per_page: 100,
+                  });
+                  const sgComment = comments.find(c => c.body && c.body.includes('Scope Gate v'));
+                  if (sgComment) {
+                    // Extract first line as summary, link to comment
+                    const firstLine = sgComment.body.split('\n').find(l => l.trim() && !l.startsWith('<!--'));
+                    scopeDetail = `[details](${sgComment.html_url})`;
+                  }
+                } catch (e) {
+                  // No scope gate comment on PASS — that's normal
+                }
+              } else if (scopeResult === 'failure') {
+                scopeDetail = 'blocked';
+              }
+
+              // ── 6. Build classification detail ──────────────────
+              let classifyDetail = '';
+              try {
+                const outputs = needs['classify']?.outputs || {};
+                const flags = [];
+                for (const [key, val] of Object.entries(outputs)) {
+                  if (val === 'true') flags.push(key.replace('has_', ''));
+                }
+                classifyDetail = flags.join(', ') || 'none';
+              } catch (e) {
+                classifyDetail = '';
+              }
+
+              // ── 7. Build detail strings per stage ───────────────
+              const detailFor = (stage) => {
+                const result = needs[stage]?.result || 'unknown';
+                switch (stage) {
+                  case 'scope-gate':
+                    return scopeDetail || result;
+                  case 'classify':
+                    return classifyDetail || result;
+                  case 'test':
+                    if (result === 'success' && coverageDesc)
+                      return coverageDesc;
+                    return result;
+                  case 'build':
+                    if (binarySizeDesc) return binarySizeDesc;
+                    return result;
+                  case 'security':
+                    if (result === 'success' && annotationCounts.error === 0)
+                      return 'clean';
+                    return result;
+                  case 'hygiene':
+                    return result;
+                  case 'code-review':
+                    if (reviewSummary) return reviewSummary;
+                    return result;
+                  default:
+                    return result;
+                }
+              };
+
+              // ── 8. Compose dashboard table ──────────────────────
+              const rows = [];
+              for (const [stage, meta] of Object.entries(stageMap)) {
+                const result = needs[stage]?.result || 'unknown';
+                const icon   = statusIcon(result);
+                const detail = detailFor(stage);
+                rows.push(`| ${meta.emoji} ${meta.label} | ${icon} ${result} | ${detail} |`);
+              }
+
+              // ── 9. Blocking summary ─────────────────────────────
+              const blocking = [];
+              for (const [stage, meta] of Object.entries(stageMap)) {
+                const result = needs[stage]?.result;
+                if (result === 'failure') {
+                  blocking.push(`${meta.emoji} ${meta.label}`);
+                }
+              }
+
+              const now = new Date().toISOString();
+              const blockLine = blocking.length > 0
+                ? `**Blocking:** ${blocking.join(', ')}`
+                : '**Blocking:** none 🎉';
+
+              const MARKER = '<!-- pi-daemon-dashboard -->';
+              const dashboard = [
+                MARKER,
+                '## 🎯 PR Status Dashboard',
+                '',
+                '| Stage | Status | Detail |',
+                '|-------|--------|--------|',
+                ...rows,
+                '',
+                blockLine,
+                `**Last updated:** ${now} · Run [#${runId}](${runUrl})`,
+              ].join('\n');
+
+              // ── 10. Upsert comment ──────────────────────────────
+              const { data: comments } = await github.rest.issues.listComments({
+                owner, repo, issue_number: prNumber, per_page: 100,
+              });
+              const existing = comments.find(c => c.body && c.body.includes(MARKER));
+
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  owner, repo, comment_id: existing.id, body: dashboard,
+                });
+                core.info(`✅ Updated dashboard comment #${existing.id}`);
+              } else {
+                const { data: created } = await github.rest.issues.createComment({
+                  owner, repo, issue_number: prNumber, body: dashboard,
+                });
+                core.info(`✅ Created dashboard comment #${created.id}`);
+              }
+
+              core.info('\n' + dashboard);
+
+            } catch (error) {
+              // Dashboard must never fail the pipeline
+              core.warning(`Dashboard failed (non-blocking): ${error.message}`);
+              core.info(error.stack || '');
+            }

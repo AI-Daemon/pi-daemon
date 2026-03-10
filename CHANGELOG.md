@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- PR Output Layer Phase 4: Single auto-updating PR dashboard comment (#142)
+  - `update-dashboard` job added to `pr-pipeline.yml` with `if: always()` and `needs: [all 9 stages]`
+  - Aggregates results from all pipeline stages into a single `<!-- pi-daemon-dashboard -->` comment
+  - Upsert logic: creates comment on first push, updates on subsequent pushes
+  - Reads `needs.*.result` for job statuses (success/failure/skipped/cancelled)
+  - Reads `repos.listCommitStatusesForRef()` for metrics (coverage %, binary size)
+  - Reads `pulls.listReviews()` for code review verdicts (arch/test/config PASS/FAIL)
+  - Reads `checks.listForRef()` for annotation counts
+  - Shows blocking issues prominently with emoji + stage name summary
+  - Scope gate row shows one-line summary + link (no detail duplication)
+  - Dashboard job always exits 0 — wrapped in try/catch, failures emit `core.warning()` only
+  - `auto-approve.yml`: `Update Dashboard` added to `SELF_NAMES` exclusion list alongside `Check Gate`
+  - Links to Actions run for drill-down
+
 ### Changed
 - PR Output Layer Phase 3: Convert security and hygiene warnings to inline file annotations (#141)
   - Secrets Scan (`_security.yml`): TruffleHog findings posted as `::error file=X,line=Y` annotations (up to 10 inline, overflow to step summary)

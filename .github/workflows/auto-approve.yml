@@ -102,10 +102,12 @@ jobs:
             }
             core.info(`Found ${allRuns.length} total check runs`);
 
-            // ── 4. Filter out our own check run ───────────────────
-            const SELF_NAMES = ['Check Gate'];
+            // ── 4. Filter out self + dashboard ────────────────────
+            // Dashboard always exits 0 and is informational — excluding
+            // it prevents a chicken-and-egg dependency with the Gate.
+            const SELF_NAMES = ['Check Gate', 'Update Dashboard'];
             const tracked = allRuns.filter(r => !SELF_NAMES.includes(r.name));
-            core.info(`Tracking ${tracked.length} checks (excluded self)\n`);
+            core.info(`Tracking ${tracked.length} checks (excluded self + dashboard)\n`);
 
             // ── 5. Minimum check threshold ────────────────────────
             // Prevent premature approval when very few checks have
