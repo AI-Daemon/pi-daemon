@@ -8,10 +8,14 @@
 
 pub mod config;
 pub mod discovery;
+pub mod health;
 pub mod installer;
+pub mod spawner;
 
 use crate::config::PiConfig;
 use crate::discovery::{PiDiscovery, PiDiscoveryError};
+use crate::health::HealthMonitor;
+use crate::spawner::ManagedPi;
 use pi_daemon_kernel::PiDaemonKernel;
 use pi_daemon_types::config::DaemonConfig;
 use serde::{Deserialize, Serialize};
@@ -46,6 +50,10 @@ pub struct PiManager {
     pi_config: PiConfig,
     /// Reference to the kernel for agent registration.
     kernel: Arc<PiDaemonKernel>,
+    /// The currently running managed Pi process (if any).
+    managed_pi: Arc<Mutex<Option<ManagedPi>>>,
+    /// Health monitor handle.
+    health_monitor: Arc<Mutex<Option<HealthMonitor>>>,
     /// Discovery result (cached after first discovery).
     discovery: Arc<Mutex<Option<PiDiscovery>>>,
     /// Total restarts since daemon start.
@@ -65,16 +73,17 @@ impl PiManager {
             daemon_config,
             pi_config,
             kernel,
+            managed_pi: Arc::new(Mutex::new(None)),
+            health_monitor: Arc::new(Mutex::new(None)),
             discovery: Arc::new(Mutex::new(None)),
             restart_count: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             last_crash: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Start the Pi Manager — discover Pi, optionally install.
+    /// Start the Pi Manager — discover Pi, optionally install, spawn if auto_start.
     ///
-    /// Returns Ok(true) if Pi was discovered, Ok(false) if degraded mode.
-    /// Spawning is handled in a later PR.
+    /// Returns Ok(true) if a managed Pi was started, Ok(false) if degraded mode.
     pub async fn start(&self) -> Result<bool, String> {
         // Step 1: Discover Pi
         let discovery = match discovery::discover_pi(&self.pi_config).await {
@@ -132,21 +141,69 @@ impl PiManager {
         };
 
         // Cache the discovery result
-        *self.discovery.lock().await = Some(discovery);
+        *self.discovery.lock().await = Some(discovery.clone());
+
+        // Step 2: Spawn if auto_start
+        if !self.pi_config.auto_start {
+            info!("Pi discovered but auto_start is disabled");
+            return Ok(false);
+        }
+
+        self.spawn_pi(&discovery).await
+    }
+
+    /// Spawn a managed Pi instance.
+    async fn spawn_pi(&self, discovery: &PiDiscovery) -> Result<bool, String> {
+        let managed = spawner::spawn_pi(
+            discovery,
+            &self.daemon_config,
+            &self.pi_config,
+            &self.kernel,
+        )
+        .await
+        .map_err(|e| format!("Failed to spawn Pi: {e}"))?;
+
+        info!(
+            pid = managed.pid(),
+            agent_id = %managed.agent_id(),
+            "Managed Pi agent spawned"
+        );
+
+        // Store the managed process
+        *self.managed_pi.lock().await = Some(managed);
+
+        // Start health monitoring
+        let monitor = HealthMonitor::new(
+            self.managed_pi.clone(),
+            self.discovery.clone(),
+            self.daemon_config.clone(),
+            self.pi_config.clone(),
+            self.kernel.clone(),
+            self.restart_count.clone(),
+            self.last_crash.clone(),
+        );
+        monitor.start();
+        *self.health_monitor.lock().await = Some(monitor);
 
         Ok(true)
     }
 
     /// Get current status of the managed Pi.
     pub async fn status(&self) -> PiStatus {
+        let managed = self.managed_pi.lock().await;
         let discovery = self.discovery.lock().await;
         let last_crash = self.last_crash.lock().await;
 
+        let (running, pid, uptime_secs) = match managed.as_ref() {
+            Some(m) => (m.is_running(), Some(m.pid()), Some(m.uptime_secs())),
+            None => (false, None, None),
+        };
+
         PiStatus {
-            running: false, // Spawning wired in later PR
-            pid: None,
+            running,
+            pid,
             version: discovery.as_ref().map(|d| d.version.clone()),
-            uptime_secs: None,
+            uptime_secs,
             restarts: self
                 .restart_count
                 .load(std::sync::atomic::Ordering::Relaxed),
@@ -155,49 +212,56 @@ impl PiManager {
         }
     }
 
-    /// Stop the managed Pi process (no-op until spawner is wired).
+    /// Stop the managed Pi process.
     pub async fn stop(&self) -> Result<(), String> {
+        // Stop health monitor first
+        if let Some(monitor) = self.health_monitor.lock().await.take() {
+            monitor.stop();
+        }
+
+        // Kill the managed Pi process
+        if let Some(mut managed) = self.managed_pi.lock().await.take() {
+            info!(pid = managed.pid(), "Stopping managed Pi");
+            managed
+                .kill(&self.kernel)
+                .await
+                .map_err(|e| format!("Failed to stop Pi: {e}"))?;
+        }
+
         Ok(())
     }
 
-    /// Restart the managed Pi process (no-op until spawner is wired).
+    /// Restart the managed Pi process.
     pub async fn restart(&self) -> Result<bool, String> {
-        Ok(false)
+        self.stop().await?;
+
+        let discovery = self.discovery.lock().await.clone();
+        match discovery {
+            Some(d) => self.spawn_pi(&d).await,
+            None => Err("Pi not discovered — cannot restart".to_string()),
+        }
     }
 
-    /// Manually start the managed Pi (no-op until spawner is wired).
+    /// Manually start the managed Pi (if not already running).
     pub async fn start_pi(&self) -> Result<bool, String> {
-        Ok(false)
-    }
+        if self.managed_pi.lock().await.is_some() {
+            return Err("Managed Pi is already running".to_string());
+        }
 
-    /// Get a reference to the daemon config.
-    pub fn daemon_config(&self) -> &DaemonConfig {
-        &self.daemon_config
-    }
-
-    /// Get a reference to the Pi config.
-    pub fn pi_config(&self) -> &PiConfig {
-        &self.pi_config
-    }
-
-    /// Get a reference to the kernel.
-    pub fn kernel(&self) -> &Arc<PiDaemonKernel> {
-        &self.kernel
-    }
-
-    /// Get a reference to the cached discovery.
-    pub fn discovery(&self) -> &Arc<Mutex<Option<PiDiscovery>>> {
-        &self.discovery
-    }
-
-    /// Get a reference to the restart count.
-    pub fn restart_count(&self) -> &Arc<std::sync::atomic::AtomicU32> {
-        &self.restart_count
-    }
-
-    /// Get a reference to the last crash timestamp.
-    pub fn last_crash(&self) -> &Arc<Mutex<Option<chrono::DateTime<chrono::Utc>>>> {
-        &self.last_crash
+        let discovery = self.discovery.lock().await.clone();
+        match discovery {
+            Some(d) => self.spawn_pi(&d).await,
+            None => {
+                // Try fresh discovery
+                match discovery::discover_pi(&self.pi_config).await {
+                    Ok(d) => {
+                        *self.discovery.lock().await = Some(d.clone());
+                        self.spawn_pi(&d).await
+                    }
+                    Err(e) => Err(format!("Pi not found: {e}")),
+                }
+            }
+        }
     }
 }
 
