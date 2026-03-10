@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- PR Output Layer Phase 2: Convert metrics (coverage, binary size) to commit statuses (#140)
+  - Coverage metric (`_test.yml`) now posts `repos.createCommitStatus()` with context `coverage` instead of a PR comment
+  - Binary size metric (`_build.yml`) now posts `repos.createCommitStatus()` with context `binary-size` instead of a PR comment
+  - Binary size >50MB now sets `state: 'failure'` (previously only a `::warning`)
+  - Full metric detail moved to `$GITHUB_STEP_SUMMARY` (accessible via the Actions run link)
+  - `statuses: write` permission added to `pr-pipeline.yml` (top-level, `test`, and `build` callers)
+  - Legacy metric PR comments are auto-deleted on first run (one-time migration cleanup)
+  - `auto-approve.yml` unaffected — it reads check runs via `checks.listForRef()`, not commit statuses
+  - `description` field truncated to 140 chars with graceful ellipsis
 - PR Output Layer Phase 1: Convert LLM code reviews to native Pull Request Reviews with inline annotations (#139)
   - All 3 review types (architectural, test quality, configuration) now use `pulls.createReview()` instead of `issues.createComment()`
   - LLM prompt schemas extended with optional `file` and `line` fields in `actions` and `issues` arrays

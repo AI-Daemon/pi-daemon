@@ -57,44 +57,64 @@ jobs:
           script: |
             const fs = require('fs');
             const binary = 'target/release/pi-daemon';
-            
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const sha = context.payload.pull_request?.head?.sha || context.sha;
+
             if (!fs.existsSync(binary)) {
               console.log('Binary not found, skipping size check');
               return;
             }
-            
+
             const size = fs.statSync(binary).size;
             const sizeMB = (size / 1024 / 1024).toFixed(1);
-            
-            let msg = `## 📏 Binary Size: ${sizeMB} MB (${size.toLocaleString()} bytes)`;
-            if (size > 50 * 1024 * 1024) {
-              msg += `\n\n🔴 **Warning:** Binary exceeds 50MB target.`;
-            } else {
-              msg += `\n\n✅ Binary size is within acceptable range.`;
-            }
-            
-            // Find existing size comment
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
+            const sizeWarning = size > 50 * 1024 * 1024;
+
+            // Write step summary with full detail
+            const summaryLines = [
+              '## 📏 Binary Size',
+              '',
+              `| Metric | Value |`,
+              `|--------|-------|`,
+              `| **Size** | ${sizeMB} MB (${size.toLocaleString()} bytes) |`,
+              `| **Threshold** | 50 MB |`,
+              `| **Status** | ${sizeWarning ? '🔴 Exceeds threshold' : '✅ Within range'} |`,
+            ];
+            fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summaryLines.join('\n') + '\n');
+
+            // Build description — must be ≤140 chars
+            const description = `${sizeMB}MB (${size.toLocaleString()} bytes)`;
+
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            // Post commit status — failure if >50MB, success otherwise
+            await github.rest.repos.createCommitStatus({
+              owner, repo, sha,
+              state: sizeWarning ? 'failure' : 'success',
+              context: 'binary-size',
+              description: description.length <= 140 ? description : description.slice(0, 137) + '...',
+              target_url: runUrl,
             });
-            const existing = comments.find(c => c.body.includes('📏 Binary Size'));
-            
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body: msg + '\n\n---\n*Updated on each commit*',
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
+            core.info(`Posted binary-size status: ${description} (${sizeWarning ? 'failure' : 'success'})`);
+
+            // One-time cleanup: delete legacy binary size PR comment if present
+            try {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner, repo,
                 issue_number: context.issue.number,
-                body: msg + '\n\n---\n*Updated on each commit*',
               });
+              const existing = comments.find(c =>
+                c.body.includes('📏 Binary Size')
+              );
+              if (existing) {
+                await github.rest.issues.deleteComment({
+                  owner, repo,
+                  comment_id: existing.id,
+                });
+                core.info(`Deleted legacy binary size comment #${existing.id}`);
+              }
+            } catch (e) {
+              core.warning(`Failed to clean up legacy binary size comment: ${e.message}`);
             }
 
   # ─── Release Build (multi-target) ──────────────────────

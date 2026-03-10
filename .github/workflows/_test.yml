@@ -103,52 +103,94 @@ jobs:
       - name: Coverage summary
         run: cargo llvm-cov --all-features --workspace --text | tee coverage-summary.txt
 
-      - name: Post coverage to PR
+      - name: Write coverage step summary
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "## 📊 Code Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat coverage-summary.txt >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Post coverage commit status
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
             const summary = fs.readFileSync('coverage-summary.txt', 'utf8');
-            
-            // Extract total line from coverage output
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const sha = context.payload.pull_request?.head?.sha || context.sha;
+
+            // Extract total coverage percentage from TOTAL line
             const lines = summary.split('\n');
             const totalLine = lines.find(l => l.includes('TOTAL'));
-            
-            const commitSha = (context.payload.pull_request?.head?.sha || context.sha).slice(0, 7);
-            const body = "## 📊 Code Coverage (" + commitSha + ")\n\n" +
-              "```\n" + lines.slice(-10).join('\n') + "\n```\n\n" +
-              "<details>\n<summary>Full coverage report</summary>\n\n" +
-              "```\n" + summary + "\n```\n</details>\n\n" +
-              "*Coverage for commit: " + commitSha + "*";
-            
-            // Find existing coverage comment for this commit
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-            
-            // Look for existing coverage comment
-            const existing = comments.find(c => 
-              c.user.login === 'github-actions[bot]' && 
-              c.body.includes('📊 Code Coverage')
+            let totalCoverage = '?';
+            if (totalLine) {
+              // cargo-llvm-cov text output: columns are Region/Function/Line/Branch percentages
+              // The line percentage is the most relevant — typically the last percentage before the TOTAL label area
+              const pcts = totalLine.match(/(\d+\.\d+)%/g);
+              if (pcts && pcts.length > 0) {
+                // Use the last percentage (line coverage) as the headline number
+                totalCoverage = pcts[pcts.length - 1].replace('%', '');
+              }
+            }
+
+            // Build per-crate summary from lines containing crate names
+            const crateLines = lines.filter(l =>
+              l.match(/^\s*(pi[-_]daemon[-_]\w+|pi[-_]daemon)\s/) && !l.includes('TOTAL')
             );
-            
-            if (existing) {
-              // Update existing comment
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              // Create new comment
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
+            const crateSummaries = crateLines.map(l => {
+              const name = l.trim().split(/\s+/)[0];
+              const pcts = l.match(/(\d+\.\d+)%/g);
+              const pct = pcts && pcts.length > 0 ? pcts[pcts.length - 1].replace('%', '') : '?';
+              // Shorten crate names: pi-daemon-kernel → kernel
+              const short = name.replace(/^pi[-_]daemon[-_]?/, '') || 'root';
+              return `${short}: ${pct}%`;
+            }).join(', ');
+
+            // Build description — must be ≤140 chars
+            let description = `${totalCoverage}% overall`;
+            if (crateSummaries) {
+              const withCrates = `${totalCoverage}% overall (${crateSummaries})`;
+              if (withCrates.length <= 140) {
+                description = withCrates;
+              } else {
+                // Truncate gracefully
+                description = withCrates.slice(0, 137) + '...';
+              }
+            }
+
+            const runUrl = `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`;
+
+            // Post commit status
+            await github.rest.repos.createCommitStatus({
+              owner, repo, sha,
+              state: 'success',
+              context: 'coverage',
+              description,
+              target_url: runUrl,
+            });
+            core.info(`Posted coverage status: ${description}`);
+
+            // One-time cleanup: delete legacy coverage PR comment if present
+            try {
+              const { data: comments } = await github.rest.issues.listComments({
+                owner, repo,
                 issue_number: context.issue.number,
-                body,
               });
+              const existing = comments.find(c =>
+                c.user.login === 'github-actions[bot]' &&
+                c.body.includes('📊 Code Coverage')
+              );
+              if (existing) {
+                await github.rest.issues.deleteComment({
+                  owner, repo,
+                  comment_id: existing.id,
+                });
+                core.info(`Deleted legacy coverage comment #${existing.id}`);
+              }
+            } catch (e) {
+              core.warning(`Failed to clean up legacy coverage comment: ${e.message}`);
             }

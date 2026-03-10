@@ -47,7 +47,7 @@ Checks fall into two categories:
 
 | Check | Tool | Blocking | Comment | Description |
 |-------|------|:--------:|:-------:|-------------|
-| **Binary Size Tracking** | cargo build --release + stat | ⚠️ | ✅ | Reports size diff vs main. Warns if growth >10%. Hard warn at >50MB absolute. |
+| **Binary Size Tracking** | cargo build --release + stat | ✅ | ❌ | Posts commit status `binary-size` with size in MB. `failure` state if >50MB. Detail in step summary. Runs via `_build.yml`. |
 | **Compile Time** | cargo build --timings | ❌ | ❌ | Advisory only. Logs are sufficient. |
 
 ### 🤖 AI-Specific (folded into Arch Review LLM call)
@@ -247,7 +247,7 @@ Lint and format checks run as a reusable workflow (`_lint-format.yml`) called by
 |-------|------|:--------:|:-------:|-------------|
 | **Unit Tests** | cargo test (per-crate matrix) | ✅ | ❌ | Parallel per-crate. Runs via `_test.yml`. |
 | **Integration Tests** | cargo test --test '*' | ✅ | ❌ | Cross-module tests. Runs via `_test.yml`. |
-| **Coverage** | cargo-llvm-cov | ❌ | ✅ | Posts coverage breakdown as PR comment. Needs unit tests. Runs via `_test.yml`. |
+| **Coverage** | cargo-llvm-cov | ❌ | ❌ | Posts commit status `coverage` with overall percentage. Detail in step summary. Needs unit tests. Runs via `_test.yml`. |
 
 Test jobs run as a reusable workflow (`_test.yml`) called by the PR Pipeline orchestrator. Tests only run after lint passes (`needs: [lint-format]` in orchestrator). Coverage depends on unit tests internally (`needs: [test-unit]`).
 
@@ -287,7 +287,7 @@ All hygiene checks run as a reusable workflow (`_hygiene.yml`) called by the PR 
 | Check | Tool | Blocking | Comment | Description |
 |-------|------|:--------:|:-------:|-------------|
 | **Release Build** | cargo build --release | ✅ | ❌ | Must compile for Linux x86_64 and macOS ARM64. Runs via `_build.yml`. |
-| **Binary Size** | stat + GitHub Script | ⚠️ | ✅ | Reports size diff. Warns if >50MB. Runs via `_build.yml`. |
+| **Binary Size** | stat + GitHub Script | ✅ | ❌ | Posts commit status `binary-size`. `failure` if >50MB (blocking). Detail in step summary. Runs via `_build.yml`. |
 | **MSRV** | cargo check on Rust 1.94 | ✅ | ❌ | Minimum Supported Rust Version. Runs via `_build.yml`. |
 | **Pi Bridge Extension** | TypeScript compilation check | ✅ | ❌ | Compiles the TypeScript bridge extension. Type-check only. Runs via `_build.yml`. |
 
@@ -300,7 +300,7 @@ Build checks run as a reusable workflow (`_build.yml`) called by the PR Pipeline
 | **Unit Tests** | cargo test (per-crate matrix) | ✅ | ❌ | Parallel per-crate. Runs via `_test.yml`. |
 | **Integration Tests** | cargo test --test '*' | ✅ | ❌ | Cross-module tests. Runs via `_test.yml` after lint passes. |
 | **E2E Tests** | tests/e2e/ | ✅ | ❌ | Full daemon boot, HTTP/WebSocket flows. |
-| **Coverage** | cargo-llvm-cov | ❌ | ✅ | Posts per-crate coverage breakdown as PR comment. Advisory only. Runs via `_test.yml`. |
+| **Coverage** | cargo-llvm-cov | ❌ | ❌ | Posts commit status `coverage` with overall percentage + per-crate summary. Full detail in step summary. Advisory only. Runs via `_test.yml`. |
 
 ### 🏖️ Sandbox Integration
 
@@ -435,6 +435,28 @@ Comprehensive code review system with intelligent file classification and specia
 
 ---
 
+## 📊 Metric Commit Statuses (#140)
+
+Coverage and binary size metrics are posted as **commit statuses** rather than PR comments. This keeps the PR timeline clean — metrics appear as status badges in the merge box instead of occupying comment slots between reviews and conversation.
+
+**Coverage** (`_test.yml` → commit status `coverage`):
+- Always `state: 'success'` — coverage is advisory, not blocking
+- `description`: overall percentage + per-crate summary (e.g., `72.3% overall (kernel: 81.2%, api: 65.1%, types: 90.0%)`)
+- Full per-crate coverage table available in `$GITHUB_STEP_SUMMARY` (click the Actions run link)
+- Truncated to 140 chars with `...` if per-crate summary is long
+
+**Binary Size** (`_build.yml` → commit status `binary-size`):
+- `state: 'failure'` if binary exceeds 50MB threshold, `state: 'success'` otherwise
+- `description`: size in MB + byte count (e.g., `12.4MB (13,003,776 bytes)`)
+- Full size breakdown table in `$GITHUB_STEP_SUMMARY`
+- >50MB is now a **blocking** status (previously only a `::warning` annotation)
+
+**Legacy cleanup:** On first run after migration, any existing `📊 Code Coverage` or `📏 Binary Size` PR comments are automatically deleted to prevent stale metric comments from lingering alongside the new status badges.
+
+**Agent experience:** Agents call `repos.listCommitStatusesForRef()` and read structured `{ context: "coverage", description: "72.3% overall", state: "success" }` — no markdown parsing needed.
+
+---
+
 ## Branch Protection & Check Gate
 
 The `main` branch is protected with the following rules:
@@ -500,11 +522,12 @@ The PR Pipeline orchestrator (`pr-pipeline.yml`) uses a top-level `permissions` 
 ```yaml
 permissions:
   contents: read          # checkout code
-  pull-requests: write    # post/update PR comments
+  pull-requests: write    # post/update PR comments and reviews
   checks: write           # report check results
+  statuses: write         # post commit statuses (coverage, binary-size)
 ```
 
-**Why this matters:** Several jobs (`coverage`, `binary-size`, hygiene checks) use `actions/github-script` to post PR comments or reviews. Code review jobs use `github.rest.pulls.createReview()` for native PR reviews with inline annotations, and `pulls.dismissReview()` to remove stale reviews on re-push. Without `pull-requests: write`, these calls fail with `403 Resource not accessible by integration`.
+**Why this matters:** Several jobs (hygiene checks, code review) use `actions/github-script` to post PR reviews or comments. Code review jobs use `github.rest.pulls.createReview()` for native PR reviews with inline annotations, and `pulls.dismissReview()` to remove stale reviews on re-push. Coverage and binary size metrics use `repos.createCommitStatus()` to post status badges in the merge box. Without `pull-requests: write`, review calls fail with `403 Resource not accessible by integration`. Without `statuses: write`, commit status calls fail similarly.
 
 **When adding new checks:** Add the job to the appropriate reusable `_*.yml` workflow. Permissions are granted at the orchestrator level when calling each reusable workflow. If a new workflow needs additional scopes, add them to the `permissions:` block on the corresponding `uses:` entry in `pr-pipeline.yml`.
 
