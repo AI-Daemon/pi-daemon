@@ -116,6 +116,13 @@ When both structural and semantic checks run, a single PR comment is posted:
 ✅ New feature adequately documented
 ```
 
+### 📝 PR Template & Local Test Enforcement
+
+| Check | Tool | Blocking | Comment | Description |
+|-------|------|:--------:|:-------:|-------------|
+| **Template Sync** | template-sync.yml | ❌ | ❌ | Validates PR template structure matches current crates/workflows. Runs on push to main + weekly cron. |
+| **Local Test Evidence** | Custom script | ⚠️ | ❌ | Warns if PR description lacks evidence of local `scripts/test-local.sh` execution or crate checkboxes. |
+
 ### 🧹 PR Hygiene
 
 | Check | Tool | Blocking | Comment | Description |

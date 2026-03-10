@@ -1,7 +1,7 @@
 //! Integration test: kernel lifecycle with agent registration and event history
 
 use pi_daemon_kernel::PiDaemonKernel;
-use pi_daemon_types::agent::AgentKind;
+use pi_daemon_types::agent::{AgentId, AgentKind};
 use pi_daemon_types::event::EventPayload;
 use tokio::time::{timeout, Duration};
 
@@ -10,10 +10,8 @@ async fn test_kernel_lifecycle_with_agent_and_events() {
     let kernel = PiDaemonKernel::new();
     let mut receiver = kernel.event_bus.subscribe_global();
 
-    // Initialize kernel
     kernel.init().await;
 
-    // Should receive startup event
     let startup_event = timeout(Duration::from_millis(100), receiver.recv())
         .await
         .expect("Should receive startup event")
@@ -25,7 +23,6 @@ async fn test_kernel_lifecycle_with_agent_and_events() {
         panic!("Expected System startup event");
     }
 
-    // Register an agent
     let agent_id = kernel
         .register_agent(
             "test-lifecycle-agent".to_string(),
@@ -34,7 +31,6 @@ async fn test_kernel_lifecycle_with_agent_and_events() {
         )
         .await;
 
-    // Should receive registration event
     let reg_event = timeout(Duration::from_millis(100), receiver.recv())
         .await
         .expect("Should receive registration event")
@@ -47,18 +43,15 @@ async fn test_kernel_lifecycle_with_agent_and_events() {
         panic!("Expected AgentRegistered event");
     }
 
-    // Verify agent is in registry
     let agent = kernel.registry.get(&agent_id).unwrap();
     assert_eq!(agent.name, "test-lifecycle-agent");
     assert_eq!(agent.kind, AgentKind::WebChat);
     assert_eq!(agent.model, Some("test-model".to_string()));
 
-    // Unregister the agent
     kernel
         .unregister_agent(&agent_id, "lifecycle test complete".to_string())
         .await;
 
-    // Should receive disconnection event
     let disc_event = timeout(Duration::from_millis(100), receiver.recv())
         .await
         .expect("Should receive disconnection event")
@@ -71,14 +64,11 @@ async fn test_kernel_lifecycle_with_agent_and_events() {
         panic!("Expected AgentDisconnected event");
     }
 
-    // Verify agent is removed from registry
     assert!(kernel.registry.get(&agent_id).is_none());
 
-    // Verify event history contains our events
     let history = kernel.event_bus.history(10).await;
-    assert_eq!(history.len(), 3); // startup + register + unregister
+    assert_eq!(history.len(), 3);
 
-    // Events should be in reverse chronological order
     if let EventPayload::AgentDisconnected { .. } = history[0].payload {
         // Most recent event should be disconnection
     } else {
@@ -86,7 +76,6 @@ async fn test_kernel_lifecycle_with_agent_and_events() {
     }
 
     if let EventPayload::System { message } = &history[2].payload {
-        // Oldest event should be startup
         assert_eq!(message, "Kernel started");
     } else {
         panic!("Expected oldest event to be System startup");
@@ -98,7 +87,6 @@ async fn test_multiple_agents_lifecycle() {
     let kernel = PiDaemonKernel::new();
     kernel.init().await;
 
-    // Register multiple agents
     let agent1 = kernel
         .register_agent("agent-1".to_string(), AgentKind::PiInstance, None)
         .await;
@@ -111,12 +99,10 @@ async fn test_multiple_agents_lifecycle() {
         )
         .await;
 
-    // Verify both are registered
     assert_eq!(kernel.registry.count(), 2);
     let agents = kernel.registry.list();
     assert_eq!(agents.len(), 2);
 
-    // Verify we can find by name
     let found1 = kernel.registry.find_by_name("agent-1");
     assert!(found1.is_some());
     assert_eq!(found1.unwrap().id, agent1);
@@ -125,22 +111,18 @@ async fn test_multiple_agents_lifecycle() {
     assert!(found2.is_some());
     assert_eq!(found2.unwrap().id, agent2);
 
-    // Unregister first agent
     kernel
         .unregister_agent(&agent1, "test complete".to_string())
         .await;
 
-    // Second agent should still be there
     assert_eq!(kernel.registry.count(), 1);
     assert!(kernel.registry.get(&agent1).is_none());
     assert!(kernel.registry.get(&agent2).is_some());
 
-    // Unregister second agent
     kernel
         .unregister_agent(&agent2, "all done".to_string())
         .await;
 
-    // No agents left
     assert_eq!(kernel.registry.count(), 0);
 }
 
@@ -149,21 +131,17 @@ async fn test_event_history_persistence() {
     let kernel = PiDaemonKernel::new();
     kernel.init().await;
 
-    // Generate several events
     for i in 0..5 {
         kernel
             .register_agent(format!("agent-{}", i), AgentKind::Hand, None)
             .await;
     }
 
-    // All agents should be registered
     assert_eq!(kernel.registry.count(), 5);
 
-    // History should contain startup + 5 registration events = 6 total
     let history = kernel.event_bus.history(20).await;
-    assert_eq!(history.len(), 6);
+    assert_eq!(history.len(), 6); // startup + 5 registrations
 
-    // Verify event types in history
     let mut system_events = 0;
     let mut registration_events = 0;
 
@@ -175,6 +153,102 @@ async fn test_event_history_persistence() {
         }
     }
 
-    assert_eq!(system_events, 1); // startup event
-    assert_eq!(registration_events, 5); // 5 agent registrations
+    assert_eq!(system_events, 1);
+    assert_eq!(registration_events, 5);
+}
+
+// ─── New edge case tests ─────────────────────────────────
+
+#[tokio::test]
+async fn test_duplicate_name_creates_distinct_agents() {
+    let kernel = PiDaemonKernel::new();
+    kernel.init().await;
+
+    let id1 = kernel
+        .register_agent("same-name".to_string(), AgentKind::WebChat, None)
+        .await;
+    let id2 = kernel
+        .register_agent("same-name".to_string(), AgentKind::WebChat, None)
+        .await;
+
+    // Should create two distinct agents with different IDs
+    assert_ne!(id1, id2);
+    assert_eq!(kernel.registry.count(), 2);
+
+    // Both should be retrievable
+    assert!(kernel.registry.get(&id1).is_some());
+    assert!(kernel.registry.get(&id2).is_some());
+}
+
+#[tokio::test]
+async fn test_unregister_nonexistent_agent_is_safe() {
+    let kernel = PiDaemonKernel::new();
+    kernel.init().await;
+
+    // Create a fake AgentId that was never registered
+    let fake_id = AgentId::new();
+
+    // Should not panic — should be a no-op
+    kernel
+        .unregister_agent(&fake_id, "never existed".to_string())
+        .await;
+
+    // Kernel should still be healthy
+    assert_eq!(kernel.registry.count(), 0);
+
+    // Should still be able to register new agents
+    let real_id = kernel
+        .register_agent("after-fake".to_string(), AgentKind::ApiClient, None)
+        .await;
+    assert!(kernel.registry.get(&real_id).is_some());
+}
+
+#[tokio::test]
+async fn test_event_history_limit_respected() {
+    let kernel = PiDaemonKernel::new();
+    kernel.init().await;
+
+    // Generate many events
+    for i in 0..20 {
+        kernel
+            .register_agent(format!("agent-{}", i), AgentKind::Hand, None)
+            .await;
+    }
+
+    // Requesting fewer than available should respect the limit
+    let history_5 = kernel.event_bus.history(5).await;
+    assert_eq!(history_5.len(), 5);
+
+    let history_10 = kernel.event_bus.history(10).await;
+    assert_eq!(history_10.len(), 10);
+
+    // The 5-event history should be a subset of the 10-event history
+    assert_eq!(history_5[0].source, history_10[0].source);
+}
+
+#[tokio::test]
+async fn test_all_agent_kinds_register_successfully() {
+    let kernel = PiDaemonKernel::new();
+    kernel.init().await;
+
+    let kinds = vec![
+        AgentKind::PiInstance,
+        AgentKind::WebChat,
+        AgentKind::TerminalChat,
+        AgentKind::ApiClient,
+        AgentKind::Hand,
+    ];
+
+    for (i, kind) in kinds.into_iter().enumerate() {
+        let id = kernel
+            .register_agent(format!("agent-kind-{}", i), kind.clone(), None)
+            .await;
+        let agent = kernel
+            .registry
+            .get(&id)
+            .expect("Agent should be registered");
+        assert_eq!(agent.kind, kind);
+    }
+
+    assert_eq!(kernel.registry.count(), 5);
 }

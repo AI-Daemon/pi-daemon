@@ -26,3 +26,6 @@ async-stream = { workspace = true }
 [dev-dependencies]
 reqwest = { workspace = true }
 tokio-tungstenite = { workspace = true }
+pi-daemon-test-utils = { path = "../pi-daemon-test-utils" }
+serde_json = { workspace = true }
+futures = { workspace = true }

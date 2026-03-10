@@ -1,7 +1,7 @@
 //! Integration test: concurrent agent registration stress test
 
 use pi_daemon_kernel::registry::AgentRegistry;
-use pi_daemon_types::agent::{AgentKind, AgentStatus};
+use pi_daemon_types::agent::{AgentId, AgentKind, AgentStatus};
 use std::sync::Arc;
 use tokio::task::JoinSet;
 
@@ -192,5 +192,104 @@ async fn test_concurrent_register_unregister() {
         let agent = registry.get(id);
         assert!(agent.is_some());
         assert!(agent.unwrap().name.contains("agent-2")); // The third agent (index 2)
+    }
+}
+
+// ─── New edge case tests ─────────────────────────────────
+
+#[tokio::test]
+async fn test_registry_count_linearizability() {
+    let registry = Arc::new(AgentRegistry::new());
+
+    // Register N agents sequentially, assert count is accurate at every step
+    let mut ids = Vec::new();
+    for i in 0..10 {
+        let id = registry.register(format!("linear-{}", i), AgentKind::WebChat, None);
+        ids.push(id);
+        assert_eq!(
+            registry.count(),
+            i + 1,
+            "Count should be {} after {} registrations",
+            i + 1,
+            i + 1
+        );
+    }
+
+    // Delete every other agent, check count
+    for (i, id) in ids.iter().enumerate() {
+        if i % 2 == 0 {
+            let _ = registry.unregister(id);
+        }
+    }
+
+    // 5 of 10 should remain
+    assert_eq!(registry.count(), 5);
+
+    // list() should agree with count()
+    assert_eq!(registry.list().len(), registry.count());
+}
+
+#[tokio::test]
+async fn test_registry_find_by_name_returns_none_for_missing() {
+    let registry = AgentRegistry::new();
+    registry.register("exists".to_string(), AgentKind::PiInstance, None);
+
+    assert!(registry.find_by_name("exists").is_some());
+    assert!(registry.find_by_name("does-not-exist").is_none());
+    assert!(registry.find_by_name("").is_none());
+}
+
+#[tokio::test]
+async fn test_registry_unregister_nonexistent_is_safe() {
+    let registry = AgentRegistry::new();
+    let fake_id = AgentId::new();
+
+    // Should not panic
+    let _ = registry.unregister(&fake_id);
+
+    // Registry should remain functional
+    let id = registry.register("after-fake".to_string(), AgentKind::Hand, None);
+    assert!(registry.get(&id).is_some());
+    assert_eq!(registry.count(), 1);
+}
+
+#[tokio::test]
+async fn test_concurrent_mixed_operations_consistency() {
+    let registry = Arc::new(AgentRegistry::new());
+    let mut tasks = JoinSet::new();
+
+    // 20 tasks doing mixed operations concurrently
+    for task_id in 0..20 {
+        let reg = registry.clone();
+        tasks.spawn(async move {
+            // Register
+            let id = reg.register(
+                format!("mixed-{}", task_id),
+                AgentKind::ApiClient,
+                Some("model".to_string()),
+            );
+            // Heartbeat
+            let _ = reg.heartbeat(&id);
+            // Status update
+            let _ = reg.set_status(&id, AgentStatus::Active);
+            // Read
+            let _ = reg.get(&id);
+            let _ = reg.list();
+            // Back to idle
+            let _ = reg.set_status(&id, AgentStatus::Idle);
+            id
+        });
+    }
+
+    let mut ids = Vec::new();
+    while let Some(result) = tasks.join_next().await {
+        ids.push(result.expect("Task should complete"));
+    }
+
+    // All 20 should exist and be in Idle status
+    assert_eq!(registry.count(), 20);
+    for id in &ids {
+        let agent = registry.get(id).expect("Agent should exist");
+        assert_eq!(agent.status, AgentStatus::Idle);
     }
 }

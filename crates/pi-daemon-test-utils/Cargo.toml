@@ -10,7 +10,7 @@ publish = false
 pi-daemon-kernel = { path = "../pi-daemon-kernel" }
 pi-daemon-api = { path = "../pi-daemon-api" }
 pi-daemon-types = { path = "../pi-daemon-types" }
-tokio = { workspace = true, features = ["macros", "time"] }
+tokio = { workspace = true, features = ["macros", "time", "rt-multi-thread"] }
 axum = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 serde_json = { workspace = true }

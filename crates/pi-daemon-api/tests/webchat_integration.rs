@@ -1,51 +1,15 @@
 //! Webchat UI integration tests
 
-use pi_daemon_api::server::build_router;
-use pi_daemon_kernel::PiDaemonKernel;
-use pi_daemon_types::config::DaemonConfig;
-use std::sync::Arc;
-use tokio::net::TcpListener;
-
-async fn start_test_server() -> String {
-    let kernel = Arc::new(PiDaemonKernel::new());
-    kernel.init().await;
-
-    let config = DaemonConfig {
-        listen_addr: "127.0.0.1:0".to_string(),
-        ..Default::default()
-    };
-
-    let (router, _state) = build_router(kernel, config);
-
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-        )
-        .await
-        .unwrap();
-    });
-
-    // Give the server a moment to start
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-    format!("http://127.0.0.1:{}", addr.port())
-}
+use pi_daemon_test_utils::FullTestServer;
 
 #[tokio::test]
 async fn test_webchat_page_loads() {
-    let base_url = start_test_server().await;
-    let client = reqwest::Client::new();
+    let server = FullTestServer::new().await;
+    let client = server.client();
 
-    let response = client.get(&base_url).send().await.unwrap();
+    let response = client.get("/").await;
 
-    // Should return 200 OK
     assert_eq!(response.status(), 200);
-
-    // Should have correct content type
     assert_eq!(
         response.headers().get("content-type").unwrap(),
         "text/html; charset=utf-8"
@@ -56,42 +20,39 @@ async fn test_webchat_page_loads() {
 
     let body = response.text().await.unwrap();
 
-    // Should contain HTML structure
     assert!(body.contains("<!DOCTYPE html>"));
     assert!(body.contains("<html"));
     assert!(body.contains("</html>"));
-
-    // Should contain pi-daemon branding
     assert!(body.contains("PI-DAEMON"));
-
-    // Should contain Alpine.js app setup
     assert!(body.contains("x-data=\"app\""));
-
-    // Should contain JavaScript
     assert!(body.contains("Alpine"));
     assert!(body.contains("marked"));
-
-    // Should contain CSS
     assert!(body.contains("var(--bg-primary)"));
-
-    // Should be substantial (not just a placeholder)
-    assert!(body.len() > 50000); // Should be >50KB with all assets
+    assert!(body.len() > 50000);
 }
 
 #[tokio::test]
 async fn test_webchat_etag_consistency() {
-    let base_url = start_test_server().await;
-    let client = reqwest::Client::new();
+    let server = FullTestServer::new().await;
+    let client = server.client();
 
-    // First request
-    let response1 = client.get(&base_url).send().await.unwrap();
+    let response1 = client.get("/").await;
+    let etag1 = response1
+        .headers()
+        .get("etag")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
 
-    let etag1 = response1.headers().get("etag").unwrap().to_str().unwrap();
-
-    // Second request should have the same ETag (content hasn't changed)
-    let response2 = client.get(&base_url).send().await.unwrap();
-
-    let etag2 = response2.headers().get("etag").unwrap().to_str().unwrap();
+    let response2 = client.get("/").await;
+    let etag2 = response2
+        .headers()
+        .get("etag")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
 
     assert_eq!(etag1, etag2);
     assert!(etag1.contains(env!("CARGO_PKG_VERSION")));
@@ -99,40 +60,34 @@ async fn test_webchat_etag_consistency() {
 
 #[tokio::test]
 async fn test_webchat_performance() {
-    let base_url = start_test_server().await;
-    let client = reqwest::Client::new();
+    let server = FullTestServer::new().await;
+    let client = server.client();
 
     let start = std::time::Instant::now();
-
-    let response = client.get(&base_url).send().await.unwrap();
-
+    let response = client.get("/").await;
     let duration = start.elapsed();
 
-    // Should load in under 500ms (single HTML response)
-    assert!(duration.as_millis() < 500);
-
-    // Should be successful
+    assert!(
+        duration.as_millis() < 500,
+        "Webchat should load in <500ms, took {}ms",
+        duration.as_millis()
+    );
     assert_eq!(response.status(), 200);
 
     let body = response.text().await.unwrap();
-
-    // Body should contain expected content
     assert!(body.contains("PI-DAEMON"));
 }
 
 #[tokio::test]
 async fn test_webchat_static_asset_embedding() {
-    let base_url = start_test_server().await;
-    let client = reqwest::Client::new();
+    let server = FullTestServer::new().await;
+    let client = server.client();
 
-    let response = client.get(&base_url).send().await.unwrap();
-
+    let response = client.get("/").await;
     let body = response.text().await.unwrap();
 
-    // Should contain embedded Alpine.js (check for Alpine.js specific code)
+    // Should contain embedded Alpine.js and marked.js
     assert!(body.contains("Alpine"));
-
-    // Should contain embedded marked.js (check for marked specific code)
     assert!(body.contains("marked"));
 
     // Should contain custom app JavaScript
@@ -154,11 +109,10 @@ async fn test_webchat_static_asset_embedding() {
 
 #[tokio::test]
 async fn test_webchat_no_external_requests() {
-    let base_url = start_test_server().await;
-    let client = reqwest::Client::new();
+    let server = FullTestServer::new().await;
+    let client = server.client();
 
-    let response = client.get(&base_url).send().await.unwrap();
-
+    let response = client.get("/").await;
     let body = response.text().await.unwrap();
 
     // Should not contain any external CDN references
@@ -171,9 +125,68 @@ async fn test_webchat_no_external_requests() {
     assert!(!body.contains("src=\"http"));
     assert!(!body.contains("href=\"http"));
 
-    // All assets should be embedded
+    // All assets should be embedded inline
     assert!(body.contains("<style>"));
     assert!(body.contains("<script"));
     assert!(body.contains("</style>"));
     assert!(body.contains("</script>"));
+}
+
+// ─── New edge case tests ─────────────────────────────────
+
+#[tokio::test]
+async fn test_webchat_concurrent_loads() {
+    let server = FullTestServer::new().await;
+    let client = server.client();
+
+    // 10 concurrent page loads should all succeed
+    let responses = client.get_concurrent("/", 10).await;
+    assert_eq!(responses.len(), 10);
+    for resp in responses {
+        assert_eq!(resp.status(), 200);
+    }
+}
+
+#[tokio::test]
+async fn test_webchat_content_length_is_substantial() {
+    let server = FullTestServer::new().await;
+    let client = server.client();
+
+    let response = client.get("/").await;
+    let body = response.text().await.unwrap();
+
+    // Webchat with all embedded assets should be substantial
+    let size = body.len();
+    assert!(
+        size > 50_000,
+        "Webchat should be >50KB with all assets, got {} bytes",
+        size
+    );
+    assert!(
+        size < 5_000_000,
+        "Webchat should be <5MB (not bloated), got {} bytes",
+        size
+    );
+}
+
+#[tokio::test]
+async fn test_webchat_has_security_relevant_structure() {
+    let server = FullTestServer::new().await;
+    let client = server.client();
+
+    let response = client.get("/").await;
+    let body = response.text().await.unwrap();
+
+    // Should not contain inline event handlers (XSS surface)
+    assert!(
+        !body.contains("onclick=\""),
+        "Should not use inline onclick handlers"
+    );
+    assert!(
+        !body.contains("onerror=\""),
+        "Should not use inline onerror handlers"
+    );
+
+    // Should have proper charset declaration
+    assert!(body.contains("charset"));
 }

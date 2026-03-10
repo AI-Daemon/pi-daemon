@@ -1,0 +1,164 @@
+name: Template Sync
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'crates/*/Cargo.toml'
+      - '.github/workflows/*.yml'
+      - 'crates/pi-daemon-test-utils/src/**'
+
+  # Weekly sync to catch drift
+  schedule:
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: template-sync
+  cancel-in-progress: true
+
+jobs:
+  sync-template:
+    name: Sync PR Template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate crate checklist
+        id: crates
+        run: |
+          # Extract workspace members from Cargo.toml
+          CRATES=$(grep -A 100 '^\[workspace\]' Cargo.toml | grep -oP '"crates/([^"]+)"' | sed 's/"crates\///;s/"//' | sort)
+
+          echo "=== Detected crates ==="
+          echo "$CRATES"
+
+          # Generate checklist markdown
+          CHECKLIST=""
+          for crate in $CRATES; do
+            CHECKLIST="${CHECKLIST}- [ ] \`${crate}\`\n"
+          done
+
+          echo "checklist<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$CHECKLIST" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Generate per-crate test sections
+        id: test_sections
+        run: |
+          CRATES=$(grep -A 100 '^\[workspace\]' Cargo.toml | grep -oP '"crates/([^"]+)"' | sed 's/"crates\///;s/"//' | sort)
+
+          SECTIONS=""
+          for crate in $CRATES; do
+            HAS_INTEGRATION=$(ls "crates/$crate/tests/"*.rs 2>/dev/null | head -1)
+
+            SECTIONS="${SECTIONS}\n#### If you modified \`${crate}\`:\n"
+            SECTIONS="${SECTIONS}- [ ] Unit tests pass: \`cargo test -p ${crate}\`\n"
+            if [ -n "$HAS_INTEGRATION" ]; then
+              SECTIONS="${SECTIONS}- [ ] Integration tests pass: \`cargo test -p ${crate} --test '*'\`\n"
+            fi
+          done
+
+          echo "sections<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$SECTIONS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Generate CI checklist from workflows
+        id: ci_checks
+        run: |
+          # Extract unique job display names from all workflow files
+          CHECKS=""
+          for wf in .github/workflows/*.yml; do
+            # Get name: fields from job definitions (indented exactly 4 spaces under jobs)
+            grep -E '^\s{4}name:' "$wf" 2>/dev/null | sed 's/.*name: //' | tr -d "'" | tr -d '"' | while read -r name; do
+              # Skip template/matrix names
+              if echo "$name" | grep -qE '\$\{\{'; then
+                continue
+              fi
+              echo "- $name"
+            done
+          done | sort -u > /tmp/ci_checks.txt
+
+          echo "checks<<EOF" >> $GITHUB_OUTPUT
+          cat /tmp/ci_checks.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Update PR template
+        run: |
+          TEMPLATE=".github/pull_request_template.md"
+
+          # Read current template
+          CONTENT=$(cat "$TEMPLATE")
+
+          # Replace crate checklist section (between marker comments)
+          # We use a simple approach: regenerate the whole template
+          # The markers ensure we know what to update
+
+          echo "Template sync: checking for updates..."
+
+          # Check if the current crate list matches
+          CURRENT_CRATES=$(grep -c '^\- \[ \] `pi-daemon' "$TEMPLATE" || echo "0")
+          EXPECTED_CRATES=$(grep -A 100 '^\[workspace\]' Cargo.toml | grep -c 'crates/' || echo "0")
+
+          echo "Current crate checkboxes: $CURRENT_CRATES"
+          echo "Expected crate count: $EXPECTED_CRATES"
+
+          # For now, the template is manually maintained with markers
+          # The sync validates that it's up to date
+          if [ "$CURRENT_CRATES" -lt "$EXPECTED_CRATES" ]; then
+            echo "::warning::PR template may be missing crate entries. Expected $EXPECTED_CRATES, found $CURRENT_CRATES checkboxes."
+          else
+            echo "✅ PR template crate list is up to date"
+          fi
+
+      - name: Validate template structure
+        run: |
+          TEMPLATE=".github/pull_request_template.md"
+
+          ERRORS=""
+
+          # Must have local test section
+          if ! grep -q "Local Test Verification" "$TEMPLATE"; then
+            ERRORS="${ERRORS}\n❌ Missing 'Local Test Verification' section"
+          fi
+
+          # Must have per-crate test checklist
+          if ! grep -q "Per-Crate Test Checklist" "$TEMPLATE"; then
+            ERRORS="${ERRORS}\n❌ Missing 'Per-Crate Test Checklist' section"
+          fi
+
+          # Must have test quality standards
+          if ! grep -q "Test Quality Standards" "$TEMPLATE"; then
+            ERRORS="${ERRORS}\n❌ Missing 'Test Quality Standards' section"
+          fi
+
+          # Must have architecture compliance
+          if ! grep -q "Architecture Compliance" "$TEMPLATE"; then
+            ERRORS="${ERRORS}\n❌ Missing 'Architecture Compliance' section"
+          fi
+
+          # Must reference test-local.sh
+          if ! grep -q "test-local.sh" "$TEMPLATE"; then
+            ERRORS="${ERRORS}\n❌ Missing reference to scripts/test-local.sh"
+          fi
+
+          # Must reference FullTestServer
+          if ! grep -q "FullTestServer" "$TEMPLATE"; then
+            ERRORS="${ERRORS}\n❌ Missing reference to FullTestServer"
+          fi
+
+          # Must have CRATE_CHECKLIST_MARKER
+          if ! grep -q "CRATE_CHECKLIST_MARKER" "$TEMPLATE"; then
+            ERRORS="${ERRORS}\n❌ Missing CRATE_CHECKLIST_MARKER"
+          fi
+
+          if [ -n "$ERRORS" ]; then
+            echo -e "PR template validation failed:${ERRORS}"
+            exit 1
+          else
+            echo "✅ PR template structure validated"
+          fi

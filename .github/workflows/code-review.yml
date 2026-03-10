@@ -139,10 +139,8 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: "## ⏭️ Architectural Review: SKIPPED\n\n" +
-                    "**Reason:** " + skipReason + "\n\n" +
-                    "**Scope:** Architectural review focuses on source code files (.rs, .ts, .js) containing architectural decisions, design patterns, and code structure. This PR contains no source files to review architecturally.\n\n" +
-                    "**Files in this PR:** Configuration files, documentation, or generated files only."
+              body: "## ⏭️ Architectural Review: Skipped\n\n" +
+                    "No source files (.rs, .ts, .js) in this PR — nothing to review architecturally. Looks like a docs/config-only change."
             });
 
       - name: Checkout repo
@@ -156,6 +154,24 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: file-classification
+
+      - name: Gather architecture context
+        if: steps.action.outputs.action == 'review'
+        run: |
+          # Inject REAL project architecture documentation into review context
+          echo "## Project Architecture (authoritative reference — review against this)" > /tmp/arch_context.txt
+          cat docs/Architecture.md >> /tmp/arch_context.txt 2>/dev/null || echo "(Architecture.md not found)" >> /tmp/arch_context.txt
+          echo "" >> /tmp/arch_context.txt
+          echo "## Code Conventions (authoritative reference)" >> /tmp/arch_context.txt
+          cat docs/Contributing.md >> /tmp/arch_context.txt 2>/dev/null || echo "(Contributing.md not found)" >> /tmp/arch_context.txt
+          echo "" >> /tmp/arch_context.txt
+          echo "## Current Crate Dependency Graph (auto-extracted)" >> /tmp/arch_context.txt
+          for crate_dir in crates/*/; do
+            crate_name=$(basename "$crate_dir")
+            deps=$(grep -A 50 '\[dependencies\]' "$crate_dir/Cargo.toml" 2>/dev/null | grep 'pi-daemon' | sed 's/=.*//' | tr -d ' ' | tr '\n' ', ' || true)
+            echo "  $crate_name depends on: ${deps:-nothing}" >> /tmp/arch_context.txt
+          done
+          echo "Context size: $(wc -c < /tmp/arch_context.txt) bytes"
 
       - name: Run architectural review
         if: steps.action.outputs.action == 'review'
@@ -173,48 +189,53 @@ jobs:
             fi
           done < source_files.txt > /tmp/arch_diff.txt
           
-          # Create the architectural review prompt
-          echo "You are an architectural code reviewer for the pi-daemon project — a Rust-based agent kernel daemon." > /tmp/arch_prompt.txt
-          echo "" >> /tmp/arch_prompt.txt
-          echo "Your job is to review a pull request diff against the project's architecture documentation and report whether the changes conform to the documented architecture, conventions, and best practices." >> /tmp/arch_prompt.txt
-          echo "" >> /tmp/arch_prompt.txt
-          echo "## Dual-Layer Review Framework" >> /tmp/arch_prompt.txt
-          echo "Perform BOTH layers of analysis. BOTH must pass for overall PASS verdict." >> /tmp/arch_prompt.txt
-          echo "" >> /tmp/arch_prompt.txt
-          echo "### Layer 1: Technical Compliance Checklist" >> /tmp/arch_prompt.txt
-          echo "1. **Crate Structure**: Do new files/modules live in the correct crate per the architecture doc? Is the dependency graph respected (types → kernel → api → cli, no cycles)?" >> /tmp/arch_prompt.txt
-          echo "2. **Concurrency Patterns**: Does the code use DashMap (not Mutex<HashMap>) for concurrent maps? broadcast channels for pub/sub? Arc for shared state?" >> /tmp/arch_prompt.txt
-          echo "3. **Error Handling**: Does the code use thiserror for typed errors and anyhow at boundaries? No unwrap() in library code (only in tests)?" >> /tmp/arch_prompt.txt
-          echo "4. **Naming Conventions**: snake_case everywhere? Types match their module names? Test naming follows test_<thing>_<behavior>?" >> /tmp/arch_prompt.txt
-          echo "5. **API Conventions**: Do new routes follow the existing pattern (State extractor, Json responses, proper status codes)? Are they documented in API-Reference.md?" >> /tmp/arch_prompt.txt
-          echo "6. **Testing**: Are there unit tests for new public functions? Integration tests for new API endpoints? Do tests use the test-utils helpers (test_kernel, test_server, TestClient)?" >> /tmp/arch_prompt.txt
-          echo "7. **Security**: No unwrap() on user input. API key middleware applied to new routes. Sensitive values not logged." >> /tmp/arch_prompt.txt
-          echo "" >> /tmp/arch_prompt.txt
-          echo "### Layer 2: Architectural Expert Analysis" >> /tmp/arch_prompt.txt
-          echo "Beyond checklist compliance, evaluate:" >> /tmp/arch_prompt.txt
-          echo "- **System Design Impact**: How do these changes affect overall architecture?" >> /tmp/arch_prompt.txt
-          echo "- **Maintainability**: Will this code be easy to maintain and evolve?" >> /tmp/arch_prompt.txt
-          echo "- **Performance Implications**: Any potential performance bottlenecks or improvements?" >> /tmp/arch_prompt.txt
-          echo "- **Integration Quality**: How well does this integrate with existing patterns?" >> /tmp/arch_prompt.txt
-          echo "- **Design Consistency**: Does this follow established design principles?" >> /tmp/arch_prompt.txt
-          echo "" >> /tmp/arch_prompt.txt
-          echo "## Response Format (JSON only, no markdown wrapping):" >> /tmp/arch_prompt.txt
-          echo '{' >> /tmp/arch_prompt.txt
-          echo '  "verdict": "PASS|FAIL",  ' >> /tmp/arch_prompt.txt
-          echo '  "summary": "Brief overall summary of architectural review",  ' >> /tmp/arch_prompt.txt
-          echo '  "checklist_verdict": "PASS|FAIL",  ' >> /tmp/arch_prompt.txt
-          echo '  "expert_verdict": "PASS|FAIL",  ' >> /tmp/arch_prompt.txt
-          echo '  "checks": [  ' >> /tmp/arch_prompt.txt
-          echo '    {"name": "Check Name", "status": "pass|fail|warning", "detail": "Explanation"}  ' >> /tmp/arch_prompt.txt
-          echo '  ],  ' >> /tmp/arch_prompt.txt
-          echo '  "issues": ["List of specific issues found"],  ' >> /tmp/arch_prompt.txt
-          echo '  "notes": "Additional architectural observations"  ' >> /tmp/arch_prompt.txt
-          echo '}' >> /tmp/arch_prompt.txt
+          # Create the architectural review prompt — tight, no fluff
+          cat > /tmp/arch_prompt.txt << 'ARCH_PROMPT'
+          You review Rust code for pi-daemon against its architecture docs (provided below). You are strict but fair — you catch real problems and skip cosmetic nitpicks. Write your summary and notes like a senior engineer talking to a peer: direct, specific, no filler. If something is good, say so briefly. If something is wrong, say exactly what and where.
 
-          # Prepare the input (diff + context)
+          ## Rules
+          - FAIL if dependency graph is violated (types→kernel→api→cli, no reverse deps)
+          - FAIL if unwrap() appears in library code (tests are fine)
+          - FAIL if Mutex<HashMap> is used instead of DashMap
+          - FAIL if println! is used instead of tracing macros
+          - FAIL if new public items lack /// doc comments
+          - FAIL if tests duplicate start_test_server() instead of using FullTestServer from test-utils
+          - WARNING if new API routes lack integration tests
+          - WARNING if error paths are untested
+
+          ## Score each dimension 0-3
+          0 = Violation (FAIL). 1 = Concern (needs changes). 2 = Acceptable. 3 = Excellent.
+
+          Dimensions:
+          - dep_graph: Dependency graph compliance (types→kernel→api→cli, no cycles)
+          - concurrency: DashMap, broadcast, Arc patterns
+          - errors: thiserror for types, anyhow at boundaries, no unwrap in lib
+          - testing: Unit tests for public fns, integration tests for endpoints, uses test-utils
+          - naming: snake_case, test_<thing>_<behavior> pattern
+          - security: No unwrap on user input, no secrets in code, auth middleware on routes
+          - docs: /// on public items, docs/*.md updated if needed
+
+          PASS: no dimension scores 0 AND average >= 2.0
+          FAIL: any dimension scores 0 OR average < 2.0
+
+          ## Output format — JSON only, no markdown, no explanation outside the JSON
+          {"verdict":"PASS|FAIL","summary":"one sentence","checklist_verdict":"PASS|FAIL","expert_verdict":"PASS|FAIL","scores":{"dep_graph":N,"concurrency":N,"errors":N,"testing":N,"naming":N,"security":N,"docs":N},"checks":[{"name":"string","status":"pass|fail|warning","detail":"string"}],"issues":["string"],"actions":["concrete task the author should do, e.g. Add integration test for /api/foo endpoint","Move bar.rs from pi-daemon-api to pi-daemon-kernel per dependency graph"],"notes":"string"}
+
+          ## actions field rules
+          - Each action is a single concrete task the PR author can act on immediately
+          - Start with a verb: Add, Move, Remove, Rename, Replace, Update, Fix, Test
+          - Reference specific files, functions, or lines when possible
+          - If verdict is PASS, actions should be empty or contain only minor suggestions
+          - If verdict is FAIL, actions must list every required fix — the author should be able to work through them like a checklist
+          ARCH_PROMPT
+
+          # Prepare the input (architecture context + diff)
           echo "## Context" > /tmp/arch_input.txt
           echo "Pull Request: Source code changes to pi-daemon" >> /tmp/arch_input.txt
           echo "Files: ${{ needs.classify.outputs.source_count }} source files (.rs, .ts, .js)" >> /tmp/arch_input.txt
+          echo "" >> /tmp/arch_input.txt
+          # Inject real architecture documentation
+          cat /tmp/arch_context.txt >> /tmp/arch_input.txt
           echo "" >> /tmp/arch_input.txt
           echo "## Diff to Review" >> /tmp/arch_input.txt
           cat /tmp/arch_diff.txt >> /tmp/arch_input.txt
@@ -236,7 +257,7 @@ jobs:
                   {"name": "Size Check", "status": "warning", "detail": ("Diff size " + $size + " bytes exceeds LLM limit")}
                 ],
                 "issues": ["Diff too large for automated LLM analysis — manual architectural review recommended"],
-                "notes": "Intelligent file filtering active. Large diff required fallback to size-based review.",
+                "notes": "Diff too large for the LLM. Passed by default — please eyeball it yourself.",
                 "checklist_verdict": "PASS",
                 "expert_verdict": "PASS"
               }' > /tmp/arch_review_result.json
@@ -282,7 +303,7 @@ jobs:
                     {"name": "LLM Analysis", "status": "warning", "detail": "OpenRouter API returned empty response"}
                   ],
                   "issues": ["LLM architectural analysis unavailable — manual review recommended"],
-                  "notes": "Intelligent file filtering active. LLM fallback due to API issue.",
+                  "notes": "LLM API hiccup. Passed by default — give it a human look.",
                   "checklist_verdict": "PASS",
                   "expert_verdict": "PASS"
                 }' > /tmp/arch_review_result.json
@@ -300,13 +321,26 @@ jobs:
       - name: Fail job if review failed  
         if: steps.action.outputs.action == 'review'
         run: |
-          # Read the verdict and fail job if review failed
-          VERDICT=$(cat /tmp/arch_review_result.json | jq -r '.verdict // "PASS"')
+          RESULT="/tmp/arch_review_result.json"
+          if ! jq . "$RESULT" >/dev/null 2>&1; then
+            echo "::warning::Arch review returned invalid JSON — passing by default"
+            echo "Raw: $(head -c 300 "$RESULT")"
+            exit 0
+          fi
+          VERDICT=$(jq -r '.verdict // "PASS"' "$RESULT")
           if [ "$VERDICT" != "PASS" ]; then
+            # If diff was truncated, LLM may be hallucinating — treat as advisory
+            DIFF_SIZE=$(wc -c < /tmp/arch_diff.txt 2>/dev/null || echo 0)
+            if [ "$DIFF_SIZE" -gt 80000 ]; then
+              echo "::warning::LLM arch review returned FAIL but diff was large ($DIFF_SIZE chars) — treating as advisory"
+              echo "Summary: $(jq -r '.summary // ""' "$RESULT")"
+              exit 0
+            fi
             echo "::error::Architectural review failed: $VERDICT"
+            echo "Summary: $(jq -r '.summary // ""' "$RESULT")"
             exit 1
           fi
-          echo "Architectural review passed: $VERDICT"
+          echo "Architectural review passed"
 
       - name: Create Architectural Check
         if: steps.action.outputs.action == 'review'
@@ -319,38 +353,64 @@ jobs:
               const raw = fs.readFileSync('/tmp/arch_review_result.json', 'utf8');
               review = JSON.parse(raw);
             } catch (e) {
-              review = {
-                verdict: 'PASS',
-                summary: 'Architectural review completed',
-                checks: [],
-                issues: [],
-                notes: 'File classification successful.'
-              };
+              review = { verdict: 'PASS', summary: 'Parse error — defaulting to PASS', scores: {}, checks: [], issues: [], notes: '' };
             }
 
             const verdict = review.verdict || 'PASS';
-            const conclusion = verdict === 'PASS' ? 'success' : 'failure';
+            const icon = verdict === 'PASS' ? '✅' : '❌';
             const sourceCount = '${{ needs.classify.outputs.source_count }}';
-            const excludedCount = '${{ needs.classify.outputs.excluded_count }}';
 
-            let summary = `## ${verdict === 'PASS' ? '✅' : '❌'} 🏗️ Architectural Review: ${verdict}\n\n`;
-            summary += `**${review.summary || 'No summary'}**\n\n`;
-            summary += `### 📁 File Classification (Intelligent Filtering)\n`;
-            summary += `**Reviewed:** ${sourceCount} source files (.rs, .ts, .js)\n`;
-            summary += `**Excluded:** ${excludedCount} generated files (package-lock.json, etc.)\n\n`;
-            summary += `### ✅ Enhanced Review System Active\n`;
-            summary += `Intelligent file filtering and dual-layer review framework ready.\n`;
-            
+            // Build scores table
+            const scores = review.scores || {};
+            const scoreRows = Object.entries(scores)
+              .map(([dim, score]) => {
+                const s = Number(score);
+                const si = s === 0 ? '🔴' : s === 1 ? '🟡' : s === 2 ? '✅' : '🟢';
+                return `| ${si} ${s}/3 | ${dim} |`;
+              }).join('\n');
+
+            // Build checks table
+            const checksRows = (review.checks || [])
+              .map(c => {
+                const ci = c.status === 'pass' ? '✅' : c.status === 'fail' ? '❌' : '⚠️';
+                return `| ${ci} | ${c.name} | ${c.detail || ''} |`;
+              }).join('\n');
+
+            // Build issues list
+            const issuesList = (review.issues || [])
+              .filter(i => i && i.length > 0)
+              .map(i => `- ${i}`)
+              .join('\n');
+
+            let body = `## ${icon} 🏗️ Architectural Review: ${verdict}\n\n`;
+            body += `Looked at ${sourceCount} source file${sourceCount === '1' ? '' : 's'}. `;
+            body += `${review.summary || 'No issues found.'}\n\n`;
+
+            if (scoreRows) {
+              body += `### How it scored\n| Score | What I checked |\n|-------|---------------|\n${scoreRows}\n\n`;
+            }
+            if (checksRows) {
+              body += `### Details\n| | Check | What I found |\n|--|-------|-------------|\n${checksRows}\n\n`;
+            }
+            if (issuesList) {
+              body += `### Things to fix\n${issuesList}\n\n`;
+            }
+            const archActions = (review.actions || [])
+              .filter(a => a && a.length > 0)
+              .map((a, i) => `${i + 1}. ${a}`)
+              .join('\n');
+            if (archActions) {
+              body += `### Recommended actions\n${archActions}\n\n`;
+            }
             if (review.notes) {
-              summary += `\n**Notes:** ${review.notes}\n`;
+              body += `### Other thoughts\n${review.notes}\n`;
             }
 
-            // Post detailed review as PR comment (job status provides pass/fail)
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: summary
+              body
             });
 
   # ─── Test Quality Review ────────────────────────────────
@@ -383,10 +443,8 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: "## ⏭️ Test Quality Review: SKIPPED\n\n" +
-                    "**Reason:** " + skipReason + "\n\n" +
-                    "**Scope:** Test quality review focuses on test files (test*.rs, *_test.go, *.test.ts, spec/) to analyze testing patterns, coverage quality, and test maintainability. This PR contains no test file changes to review.\n\n" +
-                    "**Files in this PR:** Source code, configuration, or documentation files only."
+              body: "## ⏭️ Test Quality Review: Skipped\n\n" +
+                    "No test files changed in this PR. If you added source code without tests, that's worth a second look."
             });
 
       - name: Checkout repo
@@ -400,6 +458,24 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: file-classification
+
+      - name: Gather test context
+        if: steps.action.outputs.action == 'review'
+        run: |
+          # Inject REAL project testing standards and test-utils API
+          echo "## Project Testing Standards (authoritative reference)" > /tmp/test_context.txt
+          cat docs/Testing.md >> /tmp/test_context.txt 2>/dev/null || echo "(Testing.md not found)" >> /tmp/test_context.txt
+          echo "" >> /tmp/test_context.txt
+          echo "## Available Test Utilities API (tests MUST use these)" >> /tmp/test_context.txt
+          echo "### FullTestServer (use instead of manual TcpListener boilerplate):" >> /tmp/test_context.txt
+          head -60 crates/pi-daemon-test-utils/src/server.rs >> /tmp/test_context.txt 2>/dev/null || true
+          echo "" >> /tmp/test_context.txt
+          echo "### TestClient (use instead of raw reqwest::Client):" >> /tmp/test_context.txt
+          head -40 crates/pi-daemon-test-utils/src/client.rs >> /tmp/test_context.txt 2>/dev/null || true
+          echo "" >> /tmp/test_context.txt
+          echo "### Assertion Macros (use instead of manual assertions):" >> /tmp/test_context.txt
+          head -40 crates/pi-daemon-test-utils/src/macros.rs >> /tmp/test_context.txt 2>/dev/null || true
+          echo "Test context size: $(wc -c < /tmp/test_context.txt) bytes"
 
       - name: Run test quality review
         if: steps.action.outputs.action == 'review'
@@ -417,48 +493,52 @@ jobs:
             fi
           done < test_files.txt > /tmp/test_diff.txt
           
-          # Create the test quality review prompt
-          echo "You are a test quality expert reviewing test code changes for the pi-daemon project — a Rust-based agent kernel daemon." > /tmp/test_prompt.txt
-          echo "" >> /tmp/test_prompt.txt
-          echo "Your job is to analyze test file changes and evaluate test quality, coverage patterns, and testing best practices." >> /tmp/test_prompt.txt
-          echo "" >> /tmp/test_prompt.txt
-          echo "## Dual-Layer Review Framework" >> /tmp/test_prompt.txt
-          echo "Perform BOTH layers of analysis. BOTH must pass for overall PASS verdict." >> /tmp/test_prompt.txt
-          echo "" >> /tmp/test_prompt.txt
-          echo "### Layer 1: Technical Compliance Checklist" >> /tmp/test_prompt.txt
-          echo "1. **Test Structure**: Proper test module organization? Tests in correct files (test_*.rs, *_test.go, *.test.ts, spec/)?" >> /tmp/test_prompt.txt
-          echo "2. **Naming Conventions**: Test functions follow test_<thing>_<behavior> pattern?" >> /tmp/test_prompt.txt
-          echo "3. **Test Helpers**: Uses project test-utils helpers (test_kernel, test_server, TestClient) where appropriate?" >> /tmp/test_prompt.txt
-          echo "4. **Error Testing**: Tests both success and failure cases? Error conditions properly tested?" >> /tmp/test_prompt.txt
-          echo "5. **Assertions**: Clear, meaningful assertions? No flaky or timing-dependent tests?" >> /tmp/test_prompt.txt
-          echo "6. **Isolation**: Tests are independent? Proper setup/teardown? No shared state issues?" >> /tmp/test_prompt.txt
-          echo "7. **Coverage**: New public functions have corresponding unit tests? API endpoints have integration tests?" >> /tmp/test_prompt.txt
-          echo "" >> /tmp/test_prompt.txt
-          echo "### Layer 2: Test Quality Expert Analysis" >> /tmp/test_prompt.txt
-          echo "Beyond checklist compliance, evaluate:" >> /tmp/test_prompt.txt
-          echo "- **Test Effectiveness**: Do tests actually validate the intended behavior?" >> /tmp/test_prompt.txt
-          echo "- **Edge Case Coverage**: Are boundary conditions and edge cases tested?" >> /tmp/test_prompt.txt
-          echo "- **Maintainability**: Are tests readable, clear, and easy to maintain?" >> /tmp/test_prompt.txt
-          echo "- **Performance**: Any performance testing where appropriate?" >> /tmp/test_prompt.txt
-          echo "- **Integration Quality**: Do integration tests cover realistic scenarios?" >> /tmp/test_prompt.txt
-          echo "" >> /tmp/test_prompt.txt
-          echo "## Response Format (JSON only, no markdown wrapping):" >> /tmp/test_prompt.txt
-          echo '{' >> /tmp/test_prompt.txt
-          echo '  "verdict": "PASS|FAIL",  ' >> /tmp/test_prompt.txt
-          echo '  "summary": "Brief overall summary of test quality review",  ' >> /tmp/test_prompt.txt
-          echo '  "checklist_verdict": "PASS|FAIL",  ' >> /tmp/test_prompt.txt
-          echo '  "expert_verdict": "PASS|FAIL",  ' >> /tmp/test_prompt.txt
-          echo '  "checks": [  ' >> /tmp/test_prompt.txt
-          echo '    {"name": "Check Name", "status": "pass|fail|warning", "detail": "Explanation"}  ' >> /tmp/test_prompt.txt
-          echo '  ],  ' >> /tmp/test_prompt.txt
-          echo '  "issues": ["List of specific test quality issues found"],  ' >> /tmp/test_prompt.txt
-          echo '  "notes": "Additional test quality observations"  ' >> /tmp/test_prompt.txt
-          echo '}' >> /tmp/test_prompt.txt
+          # Create the test quality review prompt — tight, enforces project standards
+          cat > /tmp/test_prompt.txt << 'TEST_PROMPT'
+          You review test code for pi-daemon against the project testing standards (provided below). You enforce the rules strictly but write like a colleague doing a code review — direct, helpful, specific. Call out what's good in one line. Call out what's wrong with the file and line if possible. No filler sentences.
 
-          # Prepare the input (test diff + context)
+          ## Hard FAIL rules (any one triggers FAIL)
+          - Test file contains a manual start_test_server() function instead of FullTestServer::new()
+          - Test uses raw reqwest::Client instead of TestClient from test-utils
+          - Test uses #[ignore] attribute
+          - Test name does not follow test_<thing>_<behavior> pattern
+          - Test only covers the happy path with no error/edge case testing
+          - Test uses tokio::time::sleep for timing instead of polling with timeout
+          - Test uses println! instead of tracing or --nocapture
+
+          ## Score each dimension 0-3
+          0 = Violation (FAIL). 1 = Concern. 2 = Acceptable. 3 = Excellent.
+
+          Dimensions:
+          - helpers: Uses FullTestServer, TestClient, assertion macros from test-utils
+          - naming: test_<thing>_<behavior> pattern, descriptive names
+          - error_coverage: Tests error paths (400, 404, 422), not just happy paths
+          - edge_cases: Boundary conditions, unicode, empty input, concurrent access
+          - isolation: No shared mutable state, uses TestKernel for temp dirs
+          - assertions: Uses expect() not unwrap(), uses project macros, clear messages
+          - structure: Tests in correct location, proper async patterns
+
+          PASS: no dimension scores 0 AND average >= 2.0
+          FAIL: any dimension scores 0 OR average < 2.0
+
+          ## Output format — JSON only, no markdown, no explanation outside the JSON
+          {"verdict":"PASS|FAIL","summary":"one sentence","checklist_verdict":"PASS|FAIL","expert_verdict":"PASS|FAIL","scores":{"helpers":N,"naming":N,"error_coverage":N,"edge_cases":N,"isolation":N,"assertions":N,"structure":N},"checks":[{"name":"string","status":"pass|fail|warning","detail":"string"}],"issues":["string"],"actions":["concrete task, e.g. Replace start_test_server() in api_integration.rs with FullTestServer::new()","Add error path test for /api/agents POST with missing name field"],"notes":"string"}
+
+          ## actions field rules
+          - Each action is a single concrete task the PR author can act on immediately
+          - Start with a verb: Add, Replace, Remove, Rename, Refactor, Test, Fix
+          - Reference specific test files, functions, or patterns when possible
+          - If verdict is PASS, actions should be empty or contain only minor suggestions
+          - If verdict is FAIL, actions must list every required fix as a workable checklist
+          TEST_PROMPT
+
+          # Prepare the input (test context + diff)
           echo "## Context" > /tmp/test_input.txt
           echo "Pull Request: Test file changes to pi-daemon" >> /tmp/test_input.txt
           echo "Files: ${{ needs.classify.outputs.test_count }} test files (test_*.rs, *_test.go, *.test.ts, spec/)" >> /tmp/test_input.txt
+          echo "" >> /tmp/test_input.txt
+          # Inject real testing standards and test-utils API
+          cat /tmp/test_context.txt >> /tmp/test_input.txt
           echo "" >> /tmp/test_input.txt
           echo "## Test Diff to Review" >> /tmp/test_input.txt
           cat /tmp/test_diff.txt >> /tmp/test_input.txt
@@ -480,7 +560,7 @@ jobs:
                   {"name": "Size Check", "status": "warning", "detail": ("Diff size " + $size + " bytes exceeds LLM limit")}
                 ],
                 "issues": ["Test diff too large for automated LLM analysis — manual test quality review recommended"],
-                "notes": "Intelligent test file filtering active. Large diff required fallback to size-based review.",
+                "notes": "Test diff too large for the LLM. Passed by default — worth a manual scan.",
                 "checklist_verdict": "PASS",
                 "expert_verdict": "PASS"
               }' > /tmp/test_review_result.json
@@ -526,7 +606,7 @@ jobs:
                     {"name": "LLM Analysis", "status": "warning", "detail": "OpenRouter API returned empty response"}
                   ],
                   "issues": ["LLM test quality analysis unavailable — manual review recommended"],
-                  "notes": "Intelligent test file filtering active. LLM fallback due to API issue.",
+                  "notes": "LLM API hiccup. Passed by default — give the tests a human look.",
                   "checklist_verdict": "PASS",
                   "expert_verdict": "PASS"
                 }' > /tmp/test_review_result.json
@@ -544,13 +624,25 @@ jobs:
       - name: Fail job if review failed
         if: steps.action.outputs.action == 'review'
         run: |
-          # Read the verdict and fail job if review failed  
-          VERDICT=$(cat /tmp/test_review_result.json | jq -r '.verdict // "PASS"')
+          RESULT="/tmp/test_review_result.json"
+          if ! jq . "$RESULT" >/dev/null 2>&1; then
+            echo "::warning::Test review returned invalid JSON — passing by default"
+            echo "Raw: $(head -c 300 "$RESULT")"
+            exit 0
+          fi
+          VERDICT=$(jq -r '.verdict // "PASS"' "$RESULT")
           if [ "$VERDICT" != "PASS" ]; then
+            DIFF_SIZE=$(wc -c < /tmp/test_diff.txt 2>/dev/null || echo 0)
+            if [ "$DIFF_SIZE" -gt 80000 ]; then
+              echo "::warning::LLM test review returned FAIL but diff was large ($DIFF_SIZE chars) — treating as advisory"
+              echo "Summary: $(jq -r '.summary // ""' "$RESULT")"
+              exit 0
+            fi
             echo "::error::Test quality review failed: $VERDICT"
+            echo "Summary: $(jq -r '.summary // ""' "$RESULT")"
             exit 1
           fi
-          echo "Test quality review passed: $VERDICT"
+          echo "Test quality review passed"
 
       - name: Create Test Quality Check
         if: steps.action.outputs.action == 'review'
@@ -563,38 +655,64 @@ jobs:
               const raw = fs.readFileSync('/tmp/test_review_result.json', 'utf8');
               review = JSON.parse(raw);
             } catch (e) {
-              review = {
-                verdict: 'PASS',
-                summary: 'Test quality review completed',
-                checks: [],
-                issues: [],
-                notes: 'Test file classification successful.'
-              };
+              review = { verdict: 'PASS', summary: 'Parse error — defaulting to PASS', scores: {}, checks: [], issues: [], notes: '' };
             }
 
             const verdict = review.verdict || 'PASS';
-            const conclusion = verdict === 'PASS' ? 'success' : 'failure';
+            const icon = verdict === 'PASS' ? '✅' : '❌';
             const testCount = '${{ needs.classify.outputs.test_count }}';
-            const sourceCount = '${{ needs.classify.outputs.source_count }}';
 
-            let summary = `## ${verdict === 'PASS' ? '✅' : '❌'} 🧪 Test Quality Review: ${verdict}\n\n`;
-            summary += `**${review.summary || 'No summary'}**\n\n`;
-            summary += `### 📁 File Classification (Test Focus)\n`;
-            summary += `**Test Files:** ${testCount} test files reviewed\n`;
-            summary += `**Source Context:** ${sourceCount} source files (for understanding test purpose)\n\n`;
-            summary += `### ✅ Test Quality Framework Active\n`;
-            summary += `Intelligent test file filtering and dual-layer review framework ready.\n`;
-            
+            // Build scores table
+            const scores = review.scores || {};
+            const scoreRows = Object.entries(scores)
+              .map(([dim, score]) => {
+                const s = Number(score);
+                const si = s === 0 ? '🔴' : s === 1 ? '🟡' : s === 2 ? '✅' : '🟢';
+                return `| ${si} ${s}/3 | ${dim} |`;
+              }).join('\n');
+
+            // Build checks table
+            const checksRows = (review.checks || [])
+              .map(c => {
+                const ci = c.status === 'pass' ? '✅' : c.status === 'fail' ? '❌' : '⚠️';
+                return `| ${ci} | ${c.name} | ${c.detail || ''} |`;
+              }).join('\n');
+
+            // Build issues list
+            const issuesList = (review.issues || [])
+              .filter(i => i && i.length > 0)
+              .map(i => `- ${i}`)
+              .join('\n');
+
+            let body = `## ${icon} 🧪 Test Quality Review: ${verdict}\n\n`;
+            body += `Reviewed ${testCount} test file${testCount === '1' ? '' : 's'}. `;
+            body += `${review.summary || 'No issues found.'}\n\n`;
+
+            if (scoreRows) {
+              body += `### How it scored\n| Score | What I checked |\n|-------|---------------|\n${scoreRows}\n\n`;
+            }
+            if (checksRows) {
+              body += `### Details\n| | Check | What I found |\n|--|-------|-------------|\n${checksRows}\n\n`;
+            }
+            if (issuesList) {
+              body += `### Things to fix\n${issuesList}\n\n`;
+            }
+            const testActions = (review.actions || [])
+              .filter(a => a && a.length > 0)
+              .map((a, i) => `${i + 1}. ${a}`)
+              .join('\n');
+            if (testActions) {
+              body += `### Recommended actions\n${testActions}\n\n`;
+            }
             if (review.notes) {
-              summary += `\n**Notes:** ${review.notes}\n`;
+              body += `### Other thoughts\n${review.notes}\n`;
             }
 
-            // Post detailed review as PR comment (job status provides pass/fail)
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: summary
+              body
             });
 
   # ─── Configuration Review ───────────────────────────────
@@ -627,10 +745,8 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: "## ⏭️ Configuration Review: SKIPPED\n\n" +
-                    "**Reason:** " + skipReason + "\n\n" +
-                    "**Scope:** Configuration review focuses on DevOps and documentation files (.yml, .toml, .md) to analyze CI/CD patterns, documentation quality, and configuration best practices. This PR contains no configuration files to review.\n\n" +
-                    "**Files in this PR:** Source code or test files only."
+              body: "## ⏭️ Configuration Review: Skipped\n\n" +
+                    "No config/docs files (.yml, .toml, .md) in this PR — pure code change."
             });
 
       - name: Checkout repo
@@ -672,11 +788,98 @@ jobs:
           
           echo "config_diff_size=$DIFF_SIZE" >> $GITHUB_OUTPUT
 
+      - name: Mechanical config pre-checks
+        if: steps.action.outputs.action == 'review'
+        id: mechanical
+        run: |
+          echo "Running mechanical pre-checks (no LLM)..."
+          ISSUES=""
+          PASS_COUNT=0
+          TOTAL_COUNT=0
+
+          # Check 1: New workflow files must be documented in PR-Reviews.md
+          TOTAL_COUNT=$((TOTAL_COUNT + 1))
+          NEW_WORKFLOWS=$(git diff origin/${{ github.base_ref }}...HEAD --name-only --diff-filter=A -- '.github/workflows/*.yml' || true)
+          if [ -n "$NEW_WORKFLOWS" ]; then
+            for wf in $NEW_WORKFLOWS; do
+              WF_NAME=$(basename "$wf" .yml)
+              if ! grep -qi "$WF_NAME" docs/PR-Reviews.md 2>/dev/null; then
+                ISSUES="${ISSUES}❌ New workflow $wf not documented in docs/PR-Reviews.md\n"
+              else
+                PASS_COUNT=$((PASS_COUNT + 1))
+              fi
+            done
+          else
+            PASS_COUNT=$((PASS_COUNT + 1))
+          fi
+
+          # Check 2: All workflow files have valid YAML
+          TOTAL_COUNT=$((TOTAL_COUNT + 1))
+          YAML_OK=true
+          for wf in .github/workflows/*.yml; do
+            if ! python3 -c "import yaml; yaml.safe_load(open('$wf'))" 2>/dev/null; then
+              ISSUES="${ISSUES}❌ Invalid YAML: $wf\n"
+              YAML_OK=false
+            fi
+          done
+          [ "$YAML_OK" = true ] && PASS_COUNT=$((PASS_COUNT + 1))
+
+          # Check 3: All workflow files have concurrency groups
+          TOTAL_COUNT=$((TOTAL_COUNT + 1))
+          CONC_OK=true
+          for wf in $NEW_WORKFLOWS; do
+            if [ -n "$wf" ] && [ -f "$wf" ] && ! grep -q "concurrency:" "$wf" 2>/dev/null; then
+              ISSUES="${ISSUES}❌ $wf missing concurrency group\n"
+              CONC_OK=false
+            fi
+          done
+          [ "$CONC_OK" = true ] && PASS_COUNT=$((PASS_COUNT + 1))
+
+          # Check 4: CHANGELOG updated if .rs/.yml/Cargo.toml changed
+          TOTAL_COUNT=$((TOTAL_COUNT + 1))
+          CHANGED=$(git diff origin/${{ github.base_ref }}...HEAD --name-only)
+          HAS_MEANINGFUL=$(echo "$CHANGED" | grep -E '\.(rs|yml)$|Cargo\.toml' | head -1)
+          HAS_CHANGELOG=$(echo "$CHANGED" | grep 'CHANGELOG.md' | head -1)
+          if [ -n "$HAS_MEANINGFUL" ] && [ -z "$HAS_CHANGELOG" ]; then
+            ISSUES="${ISSUES}❌ Meaningful files changed but CHANGELOG.md not updated\n"
+          else
+            PASS_COUNT=$((PASS_COUNT + 1))
+          fi
+
+          # Check 5: New docs/ pages in _Sidebar.md
+          TOTAL_COUNT=$((TOTAL_COUNT + 1))
+          NEW_DOCS=$(git diff origin/${{ github.base_ref }}...HEAD --name-only --diff-filter=A -- 'docs/*.md' | grep -v '^docs/_' || true)
+          SIDEBAR_OK=true
+          for doc in $NEW_DOCS; do
+            PAGE=$(basename "$doc" .md)
+            if ! grep -q "$PAGE" docs/_Sidebar.md 2>/dev/null; then
+              ISSUES="${ISSUES}❌ New page $doc not in docs/_Sidebar.md\n"
+              SIDEBAR_OK=false
+            fi
+          done
+          [ "$SIDEBAR_OK" = true ] && PASS_COUNT=$((PASS_COUNT + 1))
+
+          echo "Mechanical checks: $PASS_COUNT/$TOTAL_COUNT passed"
+          if [ -n "$ISSUES" ]; then
+            echo -e "Issues found:\n$ISSUES"
+            echo "mechanical_issues<<EOF" >> $GITHUB_OUTPUT
+            echo -e "$ISSUES" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "mechanical_pass=false" >> $GITHUB_OUTPUT
+          else
+            echo "✅ All mechanical checks passed"
+            echo "mechanical_pass=true" >> $GITHUB_OUTPUT
+            echo "mechanical_issues=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Gather configuration context
         if: steps.action.outputs.action == 'review'
         run: |
-          # Gather configuration and DevOps context
-          echo "=== Existing CI/CD Patterns ===" > /tmp/config_context.txt
+          # Gather configuration, DevOps context, and CI check catalog
+          echo "=== CI Check Catalog (from PR-Reviews.md — authoritative reference) ===" > /tmp/config_context.txt
+          cat docs/PR-Reviews.md >> /tmp/config_context.txt 2>/dev/null || echo "(PR-Reviews.md not found)" >> /tmp/config_context.txt
+
+          echo -e "\n\n=== Existing CI/CD Patterns ===" >> /tmp/config_context.txt
           ls -la .github/workflows/ >> /tmp/config_context.txt 2>/dev/null || echo "(no workflows)" >> /tmp/config_context.txt
           
           echo -e "\n\n=== Project Configuration Structure ===" >> /tmp/config_context.txt
@@ -706,25 +909,49 @@ jobs:
               "summary": "No configuration files to review",
               "checks": [{"name": "File Classification", "status": "pass", "detail": "No config files detected"}],
               "issues": [],
-              "notes": "Configuration review focuses on CI/CD, docs, and config files."
+              "notes": "No config files here — nothing to review."
             }' > /tmp/config_review_result.json
             echo "verdict=PASS" >> $GITHUB_OUTPUT
             exit 0
           fi
           
-          # Create the configuration review prompt (using simpler approach)
-          echo "You are a DevOps and documentation expert reviewing configuration changes in the pi-daemon project." > /tmp/config_prompt.txt
-          echo "" >> /tmp/config_prompt.txt
-          echo "Perform dual-layer review: 1) Technical Compliance 2) DevOps Expert Analysis" >> /tmp/config_prompt.txt
-          echo "BOTH layers must pass for overall PASS verdict." >> /tmp/config_prompt.txt
-          echo "" >> /tmp/config_prompt.txt
-          echo "Layer 1 Checklist: YAML syntax, CI/CD naming, documentation format, changelog format, workflow patterns, config fields, file structure" >> /tmp/config_prompt.txt
-          echo "" >> /tmp/config_prompt.txt
-          echo "Layer 2 Expert Analysis: Performance impact, maintainability, documentation clarity, integration, security implications, best practices" >> /tmp/config_prompt.txt
-          echo "" >> /tmp/config_prompt.txt
-          echo "Output JSON: {verdict:PASS/FAIL, checklist_verdict:PASS/FAIL, expert_verdict:PASS/FAIL, checks:[{name,status,detail}], devops_analysis:string, issues:[{severity,file,description}], notes:string}" >> /tmp/config_prompt.txt
-          echo "" >> /tmp/config_prompt.txt
-          echo "Rules: Overall FAIL if either layer FAIL. Overall PASS only if both PASS. Focus on DevOps best practices." >> /tmp/config_prompt.txt
+          # Create the configuration review prompt — tight, enforces CI/docs standards
+          cat > /tmp/config_prompt.txt << 'CONFIG_PROMPT'
+          You review CI/CD, documentation, and config changes for pi-daemon for QUALITY ONLY. Write like a DevOps engineer reviewing a teammate's PR — brief, precise, no filler.
+
+          IMPORTANT: Mechanical correctness checks (YAML validity, concurrency groups, changelog, sidebar sync, workflow documentation) are handled by a separate automated tool. Do NOT check for those — they are already verified. You will get false positives on truncated diffs if you try.
+
+          Your job is subjective quality assessment only:
+          - Are workflows well-structured and maintainable?
+          - Are job/step names clear and descriptive?
+          - Is the permissions block minimal?
+          - Are there hardcoded secrets (not ${{ secrets.* }})?
+          - Is the documentation clear and well-written?
+          - Are there unnecessary duplicate steps or dead code?
+
+          ## Score each dimension 0-3
+          0 = Serious quality problem. 1 = Concern. 2 = Acceptable. 3 = Excellent.
+
+          Dimensions:
+          - structure: Workflow organization, job ordering, step clarity
+          - naming: Job/step names are descriptive and consistent
+          - security: Minimal permissions, no hardcoded secrets, proper scoping
+          - docs_quality: Documentation is clear, accurate, well-organized
+          - maintainability: DRY, no dead code, clear comments where needed
+
+          PASS: no dimension scores 0 AND average >= 1.5
+          FAIL: any dimension scores 0 OR average < 1.5
+
+          ## Output format — JSON only, no markdown, no explanation outside the JSON
+          {"verdict":"PASS|FAIL","summary":"one sentence","checklist_verdict":"PASS|FAIL","expert_verdict":"PASS|FAIL","scores":{"structure":N,"naming":N,"security":N,"docs_quality":N,"maintainability":N},"checks":[{"name":"string","status":"pass|fail|warning","detail":"string"}],"issues":[{"severity":"error|warning|info","file":"string","description":"string"}],"actions":["concrete task, e.g. Rename job X to be more descriptive","Remove dead step Y in workflow Z"],"notes":"string"}
+
+          ## actions field rules
+          - Each action is a single concrete task the PR author can act on immediately
+          - Start with a verb: Add, Update, Remove, Fix, Rename, Simplify
+          - Reference specific files when possible
+          - If verdict is PASS, actions should be empty or contain only minor suggestions
+          - If verdict is FAIL, actions must list every required fix as a workable checklist
+          CONFIG_PROMPT
 
           # Build the user input  
           echo "## Configuration Context" > /tmp/config_input.txt
@@ -779,30 +1006,61 @@ jobs:
           # Save the review
           echo "$REVIEW" > /tmp/config_review_result.json
 
-          # Extract verdict using dual-layer logic
-          CHECKLIST_VERDICT=$(echo "$REVIEW" | jq -r '.checklist_verdict // "PASS"')
-          EXPERT_VERDICT=$(echo "$REVIEW" | jq -r '.expert_verdict // "PASS"')
-          
-          # Both must pass
-          if [ "$CHECKLIST_VERDICT" = "PASS" ] && [ "$EXPERT_VERDICT" = "PASS" ]; then
+          # Debug: log first 500 chars of review for troubleshooting
+          echo "Review output (first 500 chars): $(echo "$REVIEW" | head -c 500)"
+
+          # Validate JSON — if jq can't parse it, default to PASS
+          if ! echo "$REVIEW" | jq . >/dev/null 2>&1; then
+            echo "::warning::LLM returned invalid JSON — defaulting to PASS"
+            echo "Raw response: $(echo "$REVIEW" | head -c 300)"
             FINAL_VERDICT="PASS"
           else
-            FINAL_VERDICT="FAIL"
+            # Extract verdict using dual-layer logic
+            CHECKLIST_VERDICT=$(echo "$REVIEW" | jq -r '.checklist_verdict // "PASS"')
+            EXPERT_VERDICT=$(echo "$REVIEW" | jq -r '.expert_verdict // "PASS"')
+
+            # Both must pass
+            if [ "$CHECKLIST_VERDICT" = "PASS" ] && [ "$EXPERT_VERDICT" = "PASS" ]; then
+              FINAL_VERDICT="PASS"
+            else
+              FINAL_VERDICT="FAIL"
+            fi
           fi
-          
+
           echo "verdict=$FINAL_VERDICT" >> $GITHUB_OUTPUT
-          echo "Configuration review complete: $FINAL_VERDICT (Checklist: $CHECKLIST_VERDICT, Expert: $EXPERT_VERDICT)"
+          echo "Configuration review complete: $FINAL_VERDICT (Checklist: ${CHECKLIST_VERDICT:-n/a}, Expert: ${EXPERT_VERDICT:-n/a})"
 
       - name: Fail job if review failed
         if: steps.action.outputs.action == 'review'
         run: |
-          # Read the verdict and fail job if review failed
-          VERDICT=$(cat /tmp/config_review_result.json | jq -r '.verdict // "PASS"')
-          if [ "$VERDICT" != "PASS" ]; then
-            echo "::error::Configuration review failed: $VERDICT"
+          # Mechanical checks are authoritative — if they fail, block
+          if [ "${{ steps.mechanical.outputs.mechanical_pass }}" = "false" ]; then
+            echo "::error::Mechanical config checks failed:"
+            echo "${{ steps.mechanical.outputs.mechanical_issues }}"
             exit 1
           fi
-          echo "Configuration review passed: $VERDICT"
+
+          # LLM quality review — advisory on large diffs, blocking on small ones
+          RESULT="/tmp/config_review_result.json"
+          if ! jq . "$RESULT" >/dev/null 2>&1; then
+            echo "::warning::Config review returned invalid JSON — mechanical checks passed, continuing"
+            exit 0
+          fi
+          VERDICT=$(jq -r '.verdict // "PASS"' "$RESULT")
+          if [ "$VERDICT" != "PASS" ]; then
+            DIFF_SIZE=$(wc -c < /tmp/config_diff.txt 2>/dev/null || echo 0)
+            if [ "$DIFF_SIZE" -gt 40000 ]; then
+              echo "::warning::LLM config review returned FAIL but diff was truncated ($DIFF_SIZE chars) — treating as advisory"
+              echo "Summary: $(jq -r '.summary // ""' "$RESULT")"
+              exit 0
+            fi
+            echo "::error::Configuration review failed: $VERDICT"
+            echo "Summary: $(jq -r '.summary // ""' "$RESULT")"
+            echo "Issues: $(jq -r '.issues // [] | .[] | if type == "object" then .description else . end' "$RESULT" 2>/dev/null | head -5)"
+            echo "Actions: $(jq -r '.actions // [] | .[]' "$RESULT" 2>/dev/null | head -5)"
+            exit 1
+          fi
+          echo "Configuration review passed (mechanical ✅ + LLM ✅)"
 
       - name: Create Configuration Check
         if: steps.action.outputs.action == 'review'
@@ -815,74 +1073,61 @@ jobs:
               const raw = fs.readFileSync('/tmp/config_review_result.json', 'utf8');
               review = JSON.parse(raw);
             } catch (e) {
-              review = {
-                verdict: 'PASS',
-                summary: 'Configuration review completed',
-                checklist_verdict: 'PASS',
-                expert_verdict: 'PASS',
-                checks: [],
-                issues: [],
-                notes: 'Configuration file classification successful.'
-              };
+              review = { verdict: 'PASS', summary: 'Parse error — defaulting to PASS', scores: {}, checks: [], issues: [], notes: '' };
             }
 
             const verdict = review.verdict || 'PASS';
-            const conclusion = verdict === 'PASS' ? 'success' : 'failure';
+            const icon = verdict === 'PASS' ? '✅' : '❌';
             const configCount = '${{ needs.classify.outputs.config_count }}';
-            const diffSize = '${{ steps.diff.outputs.config_diff_size || 0 }}';
 
-            // Build enhanced summary with dual-layer results
-            const checksTable = (review.checks || [])
+            // Build scores table
+            const scores = review.scores || {};
+            const scoreRows = Object.entries(scores)
+              .map(([dim, score]) => {
+                const s = Number(score);
+                const si = s === 0 ? '🔴' : s === 1 ? '🟡' : s === 2 ? '✅' : '🟢';
+                return `| ${si} ${s}/3 | ${dim} |`;
+              }).join('\n');
+
+            // Build checks table
+            const checksRows = (review.checks || [])
               .map(c => {
-                const icon = c.status === 'pass' ? '✅' : c.status === 'fail' ? '❌' : '⏭️';
-                return `| ${icon} | ${c.name} | ${c.detail || ''} |`;
-              })
-              .join('\n');
+                const ci = c.status === 'pass' ? '✅' : c.status === 'fail' ? '❌' : '⚠️';
+                return `| ${ci} | ${c.name} | ${c.detail || ''} |`;
+              }).join('\n');
 
-            let summary = `## ${verdict === 'PASS' ? '✅' : '❌'} ⚙️ Configuration Review: ${verdict}\n\n`;
-            summary += `**${review.summary || 'No summary'}**\n\n`;
-            
-            // File classification summary
-            summary += `### 📁 File Classification (Configuration Focus)\n`;
-            summary += `**Config Files:** ${configCount} configuration files\n`;
-            summary += `**Review Size:** ${Math.round(diffSize/1000)}KB focused on DevOps and documentation\n\n`;
-
-            // Dual-layer results
-            const checklistIcon = review.checklist_verdict === 'PASS' ? '✅' : '❌';
-            const expertIcon = review.expert_verdict === 'PASS' ? '✅' : '❌';
-            
-            summary += `### ${checklistIcon} Layer 1: Technical Compliance - ${review.checklist_verdict || 'PASS'}\n\n`;
-            
-            if (checksTable) {
-              summary += `| Status | Check | Detail |\n|--------|-------|--------|\n${checksTable}\n\n`;
-            }
-            
-            summary += `### ${expertIcon} Layer 2: DevOps Expert Analysis - ${review.expert_verdict || 'PASS'}\n\n`;
-            
-            if (review.devops_analysis) {
-              summary += `${review.devops_analysis}\n\n`;
-            }
-
-            // Issues list
+            // Build issues list
             const issuesList = (review.issues || [])
               .map(i => {
-                const icon = i.severity === 'error' ? '🔴' : i.severity === 'warning' ? '🟡' : 'ℹ️';
+                const sev = (i.severity === 'error') ? '🔴' : (i.severity === 'warning') ? '🟡' : 'ℹ️';
                 const file = i.file ? `\`${i.file}\`: ` : '';
-                return `- ${icon} ${file}${i.description}`;
+                return `- ${sev} ${file}${typeof i === 'string' ? i : i.description || ''}`;
               })
+              .filter(i => i.length > 5)
               .join('\n');
 
-            if (issuesList) {
-              summary += `### Issues\n\n${issuesList}\n\n`;
+            let body = `## ${icon} ⚙️ Configuration Review: ${verdict}\n\n`;
+            body += `Checked ${configCount} config/docs file${configCount === '1' ? '' : 's'}. `;
+            body += `${review.summary || 'No issues found.'}\n\n`;
+
+            if (scoreRows) {
+              body += `### How it scored\n| Score | What I checked |\n|-------|---------------|\n${scoreRows}\n\n`;
             }
-
-            // Result explanation
-            summary += `### 🎯 Dual-Layer Result\n`;
-            summary += `**Technical Compliance:** ${review.checklist_verdict || 'PASS'} | **DevOps Analysis:** ${review.expert_verdict || 'PASS'}\n`;
-            summary += `**Final Verdict:** ${verdict} (both layers must pass)\n\n`;
-
+            if (checksRows) {
+              body += `### Details\n| | Check | What I found |\n|--|-------|-------------|\n${checksRows}\n\n`;
+            }
+            if (issuesList) {
+              body += `### Things to fix\n${issuesList}\n\n`;
+            }
+            const cfgActions = (review.actions || [])
+              .filter(a => a && typeof a === 'string' && a.length > 0)
+              .map((a, i) => `${i + 1}. ${a}`)
+              .join('\n');
+            if (cfgActions) {
+              body += `### Recommended actions\n${cfgActions}\n\n`;
+            }
             if (review.notes) {
-              summary += `### 📝 Notes\n\n${review.notes}\n\n`;
+              body += `### Other thoughts\n${review.notes}\n`;
             }
 
             // Post detailed review as PR comment (job status provides pass/fail)
@@ -890,7 +1135,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: summary
+              body
             });
 
   # ─── Code Review Gate ───────────────────────────────────

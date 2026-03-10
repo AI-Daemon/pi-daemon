@@ -86,21 +86,6 @@ fn cli_invalid_command() {
         .stderr(predicate::str::contains("unrecognized subcommand"));
 }
 
-#[tokio::test]
-#[ignore] // Requires actual daemon running
-async fn test_daemon_lifecycle() {
-    // This test requires careful orchestration and cleanup
-    // Start daemon in background, test commands, then stop
-
-    // For now, this is marked as ignore since it requires more complex test setup
-    // In a real scenario, this would:
-    // 1. Start daemon with --foreground in background task
-    // 2. Wait for it to be ready (health check)
-    // 3. Test status command
-    // 4. Test stop command
-    // 5. Verify cleanup
-}
-
 #[test]
 fn cli_start_shows_help_options() {
     Command::cargo_bin("pi-daemon")
@@ -123,4 +108,66 @@ fn cli_chat_shows_help_options() {
         .stdout(predicate::str::contains("Interactive terminal chat"))
         .stdout(predicate::str::contains("--agent"))
         .stdout(predicate::str::contains("--model"));
+}
+
+// ─── New tests ───────────────────────────────────────────
+
+#[test]
+fn cli_version_format_is_semver() {
+    let output = Command::cargo_bin("pi-daemon")
+        .unwrap()
+        .arg("version")
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should contain a version like "pi-daemon v0.1.0"
+    assert!(
+        stdout.contains("v0.") || stdout.contains("v1."),
+        "Version should be semver-like, got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn cli_all_subcommands_have_help() {
+    // Every subcommand should respond to --help without errors
+    for subcmd in &["start", "stop", "status", "chat", "config", "version"] {
+        let result = Command::cargo_bin("pi-daemon")
+            .unwrap()
+            .args([subcmd, "--help"])
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{} --help should succeed, got: {}",
+            subcmd,
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+}
+
+#[test]
+fn cli_config_does_not_leak_real_keys() {
+    let output = Command::cargo_bin("pi-daemon")
+        .unwrap()
+        .arg("config")
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should NOT contain real API key patterns
+    assert!(
+        !stdout.contains("sk-ant-"),
+        "Config output should not contain Anthropic keys"
+    );
+    assert!(
+        !stdout.contains("sk-proj-"),
+        "Config output should not contain OpenAI keys"
+    );
+    assert!(
+        !stdout.contains("ghp_"),
+        "Config output should not contain GitHub PATs"
+    );
 }

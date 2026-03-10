@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `FullTestServer` in test-utils — centralized API test server replacing duplicated boilerplate (#116)
+- Enhanced `TestClient` with `put_json`, `patch_json`, `post_raw`, `get_concurrent`, `post_json_expect` methods (#116)
+- New assertion macros: `assert_header!`, `assert_json_contains!`, `assert_openai_completion!`, `assert_events_contain!` (#116)
+- `scripts/test-local.sh` — local test runner mirroring CI (lint + test + integration) (#116)
+- Self-updating PR template with per-crate test checklists and local test enforcement (#116)
+- Template sync workflow (`.github/workflows/template-sync.yml`) — auto-validates template structure (#116)
+- Edge case tests: concurrent mutations, unicode content, double-delete idempotency, WebSocket flood, rapid pings (#116)
+
+### Changed
+- All API integration tests refactored to use `FullTestServer::new()` — zero duplicated `start_test_server()` (#116)
+- LLM review prompts now inject real Architecture.md, Testing.md, and PR-Reviews.md as context (#116)
+- Test quality review prompt enforces `FullTestServer` and project assertion macros (#116)
+- Removed `#[ignore]` from CLI `test_daemon_lifecycle` — all tests now run (#116)
+- PR template overhauled with per-crate checklists, architecture compliance, and local test evidence (#116)
+
+### Previously Added
 - Core types crate (`pi-daemon-types`) with agent, message, event, and error types (#4)
 - Kernel crate (`pi-daemon-kernel`) with agent registry and event bus (#5)
 - Config system with TOML files and environment variable overrides (#6)
