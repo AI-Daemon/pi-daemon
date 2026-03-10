@@ -76,6 +76,8 @@ rand = "0.8"
 base64 = "0.22"
 bytes = "1"
 
+# Note: nix and libc removed - using process spawning instead of fork-based daemonization
+
 # Test dependencies
 tempfile = "3"
 

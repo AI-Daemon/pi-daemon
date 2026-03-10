@@ -1,3 +1,5 @@
+pub mod daemon;
+
 use clap::{Parser, Subcommand};
 use pi_daemon_kernel::config::{
     config_path, load_config, read_daemon_info, remove_daemon_info, write_daemon_info,
@@ -62,21 +64,13 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn cmd_start(foreground: bool, listen_override: Option<String>) -> anyhow::Result<()> {
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "pi_daemon=info,tower_http=info".into()),
-        )
-        .init();
-
-    // Load config
+    // Load config first (before daemonizing to catch config errors early)
     let mut config = load_config()?;
     if let Some(addr) = listen_override {
         config.listen_addr = addr;
     }
 
-    // Check if daemon is already running
+    // Check if daemon is already running (before daemonizing)
     if let Ok(info) = read_daemon_info() {
         // Verify the process is actually running (not just a stale PID file)
         #[cfg(unix)]
@@ -117,11 +111,47 @@ async fn cmd_start(foreground: bool, listen_override: Option<String>) -> anyhow:
         }
     }
 
+    // Handle backgrounding differently - use process spawning instead of forking
+    if !foreground {
+        println!("pi-daemon starting in background mode...");
+        println!("  Address:  http://{}", config.listen_addr);
+        println!("  Webchat:  http://{}", config.listen_addr);
+        println!();
+        println!("Use `pi-daemon status` to check status");
+        println!("Use `pi-daemon chat` for terminal chat");
+        println!("Use `pi-daemon stop` to stop the daemon");
+        println!();
+
+        // For background mode, spawn a new process and exit this one
+        return spawn_daemon_process(&config.listen_addr);
+    }
+
+    // Initialize tracing AFTER daemonizing
+    if foreground {
+        // In foreground mode, log to terminal with full verbosity
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "pi_daemon=info,tower_http=info".into()),
+            )
+            .init();
+    } else {
+        // In daemon mode, use minimal console logging since stdout/stderr are detached
+        // This will primarily log to the daemon log file via our custom logging
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "pi_daemon=error,tower_http=error".into()), // Only errors in daemon mode
+            )
+            .with_ansi(false) // No ANSI colors in daemon mode
+            .init();
+    }
+
     // Create kernel
     let kernel = Arc::new(pi_daemon_kernel::PiDaemonKernel::new());
     kernel.init().await;
 
-    // Write daemon info
+    // Write daemon info (with correct PID after daemonizing)
     let daemon_info = DaemonInfo {
         pid: std::process::id(),
         listen_addr: config.listen_addr.clone(),
@@ -129,6 +159,17 @@ async fn cmd_start(foreground: bool, listen_override: Option<String>) -> anyhow:
         version: env!("CARGO_PKG_VERSION").to_string(),
     };
     write_daemon_info(&daemon_info)?;
+
+    // Log daemon startup to file if in daemon mode
+    if !foreground {
+        let log_msg = format!(
+            "pi-daemon v{} started in background mode (PID {}) listening on {}",
+            env!("CARGO_PKG_VERSION"),
+            daemon_info.pid,
+            daemon_info.listen_addr
+        );
+        let _ = daemon::write_daemon_log(&log_msg);
+    }
 
     // Verify GitHub auth if configured
     if !config.github.personal_access_token.is_empty() {
@@ -145,21 +186,11 @@ async fn cmd_start(foreground: bool, listen_override: Option<String>) -> anyhow:
         "pi-daemon starting"
     );
 
-    if !foreground {
-        println!("pi-daemon started in background");
-        println!("  PID:      {}", daemon_info.pid);
-        println!("  Address:  http://{}", daemon_info.listen_addr);
-        println!("  Webchat:  http://{}", daemon_info.listen_addr);
-        println!();
-        println!("Use `pi-daemon status` to check status");
-        println!("Use `pi-daemon chat` for terminal chat");
-        println!("Use `pi-daemon stop` to stop the daemon");
-    }
-
-    // Handle Ctrl+C
+    // Handle Ctrl+C (mainly for foreground mode, daemon mode won't receive this)
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
         tracing::info!("Received Ctrl+C, shutting down...");
+        let _ = daemon::write_daemon_log("pi-daemon stopped via Ctrl+C");
         remove_daemon_info();
         std::process::exit(0);
     });
@@ -168,7 +199,39 @@ async fn cmd_start(foreground: bool, listen_override: Option<String>) -> anyhow:
     pi_daemon_api::server::run_daemon(kernel, config).await?;
 
     // Cleanup
+    let _ = daemon::write_daemon_log("pi-daemon stopped normally");
     remove_daemon_info();
+    Ok(())
+}
+
+/// Spawn the daemon process in the background and exit the parent
+fn spawn_daemon_process(listen_addr: &str) -> anyhow::Result<()> {
+    use std::process::{Command, Stdio};
+
+    // Get the current executable path
+    let exe_path = std::env::current_exe()
+        .map_err(|e| anyhow::anyhow!("Failed to get current executable path: {}", e))?;
+
+    // Spawn a new process with --foreground flag but detached from terminal
+    let mut cmd = Command::new(exe_path);
+    cmd.args(["start", "--foreground", "--listen", listen_addr])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    // Process spawning with detached stdio is sufficient for backgrounding
+    // The subprocess will naturally be detached from the parent terminal
+
+    let child = cmd
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("Failed to spawn daemon process: {}", e))?;
+
+    // Don't wait for the child - let it run independently
+    std::mem::forget(child);
+
+    // Give the daemon a moment to start before exiting
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
     Ok(())
 }
 

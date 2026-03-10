@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Manual re-trigger for Check Gate via `workflow_dispatch` (#60/#61)
 
 ### Fixed
+- Daemon no longer runs in foreground mode when `--foreground` flag is not provided (#113/#114)
+- Implemented proper Unix background daemonization with terminal detachment via setsid
+- Added daemon logging to `~/.pi-daemon/daemon.log` for background operations
+- Process spawning approach maintains async runtime compatibility
+- Background daemon processes are properly detached from TTY (show `?` in ps output)
 - Sandbox integration test: fix hanging recovery test and broken pipe errors (#83)
 - CLI detects stale daemon.json after crash and auto-cleans instead of refusing to start (#83)
 - Recovery test properly waits for port to clear after kill -9 (#83)
