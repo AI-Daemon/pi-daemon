@@ -1231,6 +1231,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "pi-daemon-pi-manager"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "pi-daemon-kernel",
+ "pi-daemon-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tracing",
+]
+
+[[package]]
 name = "pi-daemon-test-utils"
 version = "0.1.0"
 dependencies = [

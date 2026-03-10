@@ -1,0 +1,19 @@
+[package]
+name = "pi-daemon-pi-manager"
+version.workspace = true
+edition.workspace = true
+description = "Managed Pi process lifecycle — discovery, install, spawn, health monitoring"
+publish = false
+
+[dependencies]
+pi-daemon-types = { path = "../pi-daemon-types" }
+pi-daemon-kernel = { path = "../pi-daemon-kernel" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+toml = { workspace = true }
