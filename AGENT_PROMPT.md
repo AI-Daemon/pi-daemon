@@ -74,9 +74,10 @@ If the issue spec seems wrong or contradicts another issue, **stop and ask the u
 - **Repo:** `Demonseed-jpg/pi-daemon`
 - **Local path:** current working directory
 - **Branch strategy:** Feature branches from `main` → squash-merge via PR
-- **CI:** 14+ automated checks on every PR (see `docs/PR-Reviews.md`)
+- **CI:** 40+ automated checks on every PR, all orchestrated via `pr-pipeline.yml` (see `docs/PR-Reviews.md`)
 - **Branch protection:** `main` requires PR + 1 approving review + status checks passing
 - **Auto-approve:** A bot approves PRs when all checks pass — you do not need human approval
+- **Pipeline:** All PR checks run through `pr-pipeline.yml` (orchestrator). Scope gate blocks everything. Lint → test → code-review. Lint → build → sandbox. Security and hygiene run parallel after scope gate. Post-merge CI on main runs via `ci-main.yml`.
 
 ---
 
@@ -286,7 +287,7 @@ Check that the crate is listed in the workspace `Cargo.toml` members and that yo
 Read the CI comment or log output. The check is probably catching something real:
 - **Arch Review:** Did you follow the architecture patterns?
 - **Clippy:** Do you have warnings? Zero warnings means zero.
-- **Docs Check:** Did you update `docs/Architecture.md` or `_Sidebar.md`?
+- **Docs Drift / Changelog:** Did you update the relevant docs and `CHANGELOG.md`?
 - **Secrets Scan:** Did you accidentally include a token?
 - **PR Hygiene:** Is your commit message in Conventional Commits format?
 

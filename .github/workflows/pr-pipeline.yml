@@ -4,13 +4,21 @@ name: PR Pipeline
 # Scope gate runs first; all other stages depend on it (directly or
 # transitively). If scope gate blocks, downstream jobs are skipped.
 #
-# Phase 1: scope-gate → lint-format
-# Phase 2: scope-gate → lint-format → test
-#           scope-gate → security (parallel with lint)
-# Phase 3: scope-gate → lint-format → test → code-review
-#           scope-gate → lint-format → build → sandbox
-#           scope-gate → security (parallel with lint)
-# Phase 4: will add hygiene consolidation + cleanup
+# Dependency graph:
+#   scope-gate
+#       │
+#       ├──→ lint-format ──┬──→ test ──────────→ code-review
+#       │                  │
+#       │                  └──→ build ─────────→ sandbox
+#       │
+#       ├──→ security (parallel with lint)
+#       │
+#       └──→ hygiene (parallel with lint)
+#
+# All PR checks live under this single workflow. Post-merge CI on main
+# is handled by ci-main.yml. Auto-approve watches only "PR Pipeline".
+#
+# Phase 4 (#128) — final form.
 
 on:
   pull_request:
@@ -56,6 +64,14 @@ jobs:
   security:
     needs: [scope-gate]
     uses: ./.github/workflows/_security.yml
+    permissions:
+      contents: read
+      pull-requests: write
+    secrets: inherit
+
+  hygiene:
+    needs: [scope-gate]
+    uses: ./.github/workflows/_hygiene.yml
     permissions:
       contents: read
       pull-requests: write

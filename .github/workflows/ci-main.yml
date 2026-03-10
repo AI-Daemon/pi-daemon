@@ -1,0 +1,36 @@
+name: CI (main)
+
+# Post-merge CI on main — runs tests and builds after PRs are merged.
+# Reuses the same _test.yml and _build.yml workflows used in the PR pipeline.
+#
+# The PR pipeline (pr-pipeline.yml) handles pull_request triggers.
+# This workflow handles push-to-main triggers that were previously in ci.yml.
+#
+# Phase 4 (#128) of the CI Orchestrator migration (#124).
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-main-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  test:
+    uses: ./.github/workflows/_test.yml
+    permissions:
+      contents: read
+      pull-requests: write
+    secrets: inherit
+
+  build:
+    uses: ./.github/workflows/_build.yml
+    permissions:
+      contents: read
+      pull-requests: write
+    secrets: inherit

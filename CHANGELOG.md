@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- CI Orchestrator Phase 4 — hygiene consolidation, auto-approve update, cleanup (#128)
+- `_hygiene.yml` — reusable hygiene workflow consolidating commit-msg-scan, docs-check, pr-hygiene, and remaining ci.yml jobs (#128)
+- `ci-main.yml` — post-merge CI on main, reuses `_test.yml` and `_build.yml` (#128)
+- Hygiene depends on scope-gate via `needs:` in orchestrator — runs parallel with lint and security (#128)
+
+### Changed
+- `pr-pipeline.yml` — added hygiene stage, now orchestrates all PR checks (#128)
+- `auto-approve.yml` — simplified to watch only "PR Pipeline" (all PR checks are under it) (#128)
+- `docs/PR-Reviews.md` — updated pipeline architecture, workflow file listing, check tables (#128)
+- `AGENT_PROMPT.md` — updated CI section with pipeline structure (#128)
+
+### Removed
+- `ci.yml` — all jobs migrated to reusable workflows; push trigger replaced by `ci-main.yml` (#128)
+- `commit-msg-scan.yml` — merged into `_hygiene.yml` (#128)
+- `docs-check.yml` — merged into `_hygiene.yml` (#128)
+- `pr-hygiene.yml` — merged into `_hygiene.yml` (#128)
+
+### Previously Added
 - CI Orchestrator Phase 3 — code review, build, sandbox as reusable workflows under the orchestrator (#127)
 - `_code-review.yml` — reusable code review workflow: file classification, architectural/test-quality/configuration LLM reviews (#127)
 - `_build.yml` — reusable build workflow: release builds (multi-target matrix), binary size, MSRV, bridge extension (#127)

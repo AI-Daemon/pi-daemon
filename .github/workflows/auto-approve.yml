@@ -19,14 +19,10 @@ on:
   check_suite:
     types: [completed]
   # workflow_run fires when a named workflow completes. This is the only
-  # way to trigger on Actions workflow completions. Workflow names change
-  # rarely (6 workflows) vs check/job names (32+), so this is acceptable.
+  # way to trigger on Actions workflow completions. After Phase 4 (#128),
+  # all PR checks live under the single "PR Pipeline" orchestrator.
   workflow_run:
     workflows:
-      - "CI"
-      - "Commit Message Secret Scan"
-      - "PR Hygiene"
-      - "Documentation"
       - "PR Pipeline"
     types: [completed]
   workflow_dispatch:

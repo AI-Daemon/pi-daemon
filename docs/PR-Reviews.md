@@ -19,7 +19,7 @@ Checks fall into two categories:
 |-------|------|:--------:|:-------:|-------------|
 | **Secrets Scan** | TruffleHog | ✅ | ✅ | Scans full diff for leaked API keys, tokens, passwords, private keys. Runs via `_security.yml`. |
 | **Hardcoded Credentials** | gitleaks / custom grep | ✅ | ✅ | Regex patterns for `sk-ant-`, `ghp_`, `Bearer `, `password = "`, etc. Runs via `_security.yml`. |
-| **Commit Message Secrets** | Custom script | ✅ | ✅ | Scans all PR commit messages for secret patterns and env dumps. See `commit-msg-scan.yml`. |
+| **Commit Message Secrets** | Custom script | ✅ | ✅ | Scans all PR commit messages for secret patterns and env dumps. Runs via `_hygiene.yml`. |
 | **SSRF / Private IP** | Custom grep | ⚠️ | ❌ | Scans for hardcoded private IPs, cloud metadata URLs, or localhost in non-test code. Advisory only — some localhost refs are intentional. |
 
 ### 📦 Supply Chain & Dependencies
@@ -129,27 +129,26 @@ When both structural and semantic checks run, a single PR comment is posted:
 |-------|------|:--------:|:-------:|-------------|
 | **PR Pipeline** | `pr-pipeline.yml` | ✅ | ❌ | Orchestrator that calls reusable workflows in dependency order. Scope gate runs first; lint, test, and security depend on it via `needs:`. |
 
-The PR Pipeline (`pr-pipeline.yml`) is the orchestrator for PR checks. It calls reusable workflows using `uses: ./.github/workflows/_*.yml` and enforces ordering via `needs:`. If the scope gate blocks, all downstream jobs are automatically skipped.
+The PR Pipeline (`pr-pipeline.yml`) is the sole orchestrator for all PR checks. It calls reusable workflows using `uses: ./.github/workflows/_*.yml` and enforces ordering via `needs:`. If the scope gate blocks, all downstream jobs are automatically skipped.
 
-**Current pipeline (Phase 3):**
+**Pipeline dependency graph:**
 ```
 scope-gate
     │
-    ├─→ lint-format ─┬─→ test ─────────→ code-review (LLM reviews)
-    │                │
-    │                └─→ build ─────────→ sandbox (integration)
+    ├──→ lint-format ──┬──→ test ──────────→ code-review (LLM reviews)
+    │                  │
+    │                  └──→ build ─────────→ sandbox (integration)
     │
-    ├─→ security
+    ├──→ security (parallel with lint)
     │
-    └─→ (remaining ci.yml: unused-deps, docs-drift, etc. — still independent)
+    └──→ hygiene (parallel with lint)
 ```
 
 **Key ordering guarantees:**
 - Code review only fires after lint + tests pass — the LLM never reviews broken code (#127)
 - Sandbox only runs after build passes — no point testing a binary that doesn't compile (#127)
 - Build runs in parallel with tests (both depend on lint) for faster pipeline completion
-
-Phase 4 (#128) will consolidate the remaining ci.yml hygiene checks and clean up.
+- Security and hygiene run in parallel with lint (only depend on scope gate) (#128)
 
 ### 🔬 Scope Gate
 
@@ -202,10 +201,21 @@ Security checks run as a reusable workflow (`_security.yml`) called by the PR Pi
 
 ### 🧹 PR Hygiene
 
+All hygiene checks run as a reusable workflow (`_hygiene.yml`) called by the PR Pipeline orchestrator after scope gate passes (`needs: [scope-gate]`). This consolidates what was previously spread across `commit-msg-scan.yml`, `docs-check.yml`, `pr-hygiene.yml`, and the remaining `ci.yml` jobs.
+
 | Check | Tool | Blocking | Comment | Description |
 |-------|------|:--------:|:-------:|-------------|
-| **Commit Message Lint** | Custom regex | ⚠️ | ❌ | Conventional Commits format: `feat:`, `fix:`, `docs:`, `test:`, `ci:`, `refactor:`, `chore:`. |
-| **PR Description** | Custom script | ⚠️ | ❌ | Verifies PR body isn't empty and references an issue. |
+| **Commit Message Lint** | Custom regex | ⚠️ | ❌ | Conventional Commits format: `feat:`, `fix:`, `docs:`, `test:`, `ci:`, `refactor:`, `chore:`. Runs via `_hygiene.yml`. |
+| **PR Description** | Custom script | ⚠️ | ❌ | Verifies PR body isn't empty and references an issue. Runs via `_hygiene.yml`. |
+| **Commit Message Secrets** | Custom script | ✅ | ✅ | Scans commit messages for secret patterns and env dumps. Runs via `_hygiene.yml`. |
+| **Sidebar Sync** | Custom bash | ✅ | ✅ | Verifies `docs/_Sidebar.md` matches `docs/*.md` files. Runs via `_hygiene.yml`. |
+| **Markdown Lint** | markdownlint | ⚠️ | ❌ | Heading structure, formatting. Runs via `_hygiene.yml`. |
+| **Link Check** | lychee | ⚠️ | ❌ | Validates links in markdown files. Runs via `_hygiene.yml`. |
+| **Unused Dependencies** | cargo-machete | ⚠️ | ✅ | Detects deps never used in code. Warning only. Runs via `_hygiene.yml`. |
+| **Crate Docs Sync** | Custom script | ✅ | ❌ | Verifies all workspace crates appear in `Architecture.md`. Runs via `_hygiene.yml`. |
+| **TODO Tracker** | Custom grep | ⚠️ | ✅ | New TODOs must reference a GitHub issue. Runs via `_hygiene.yml`. |
+| **Docs Drift** | Custom script | ✅ | ✅ | Fails if source/config/workflow changes lack corresponding doc updates. Runs via `_hygiene.yml`. |
+| **Changelog** | Custom script | ✅ | ❌ | Fails if meaningful changes lack CHANGELOG.md update. Runs via `_hygiene.yml`. |
 
 ### 🏗️ Build & Release
 
@@ -367,12 +377,12 @@ The `main` branch is protected with the following rules:
 
 ### Check Gate (`auto-approve.yml`)
 
-The Check Gate is a **dynamic auto-approve system** that discovers and tracks all PR checks automatically — no hardcoded check names.
+The Check Gate is a **dynamic auto-approve system** that discovers and tracks all PR checks automatically — no hardcoded check names. After Phase 4 (#128), it watches only the **"PR Pipeline"** workflow since all PR checks now live under that single orchestrator.
 
 **How it works:**
 
-1. Each time a CI workflow completes (`workflow_run` event), the Gate fires
-2. It fetches **all** check runs for the PR head SHA using the paginated Checks API (`github.paginate`)
+1. When the "PR Pipeline" workflow completes (`workflow_run` event), the Gate fires
+2. It fetches **all** check runs for the PR head SHA using the paginated Checks API
 3. It self-excludes its own `Check Gate` check run to prevent loops
 4. It classifies every check: pass, fail, skip, running, pending, cancelled
 5. **Decision:**
@@ -382,8 +392,9 @@ The Check Gate is a **dynamic auto-approve system** that discovers and tracks al
 6. If approved, submits an approving review as `github-actions[bot]`
 
 **Key properties:**
-- **Zero hardcoded check names** — discovers checks dynamically
+- **Zero hardcoded check names** — discovers checks dynamically via SHA
 - **Minimum threshold (20)** — prevents premature approval when few checks have registered; this is the only tunable
+- **Single trigger** — watches only "PR Pipeline" (all PR checks are under it)
 - **Concurrency groups** — prevents race conditions from simultaneous triggers
 - **Manual re-trigger** — escape hatch when event-driven triggers fail:
 
@@ -414,7 +425,7 @@ Agents can bypass with `--no-verify`, which is why CI scanning is the real backs
 
 ## Workflow Permissions
 
-The CI workflow (`ci.yml`) uses a top-level `permissions` block to grant the `GITHUB_TOKEN` the minimum scopes needed:
+The PR Pipeline orchestrator (`pr-pipeline.yml`) uses a top-level `permissions` block and passes them down to reusable workflows via `permissions:` on each `uses:` call:
 
 ```yaml
 permissions:
@@ -423,9 +434,9 @@ permissions:
   checks: write           # report check results
 ```
 
-**Why this matters:** Several jobs (`coverage`, `binary-size`, `report`) use `actions/github-script` to post PR comments via `github.rest.issues.createComment()`. Without `pull-requests: write`, these calls fail with `403 Resource not accessible by integration`.
+**Why this matters:** Several jobs (`coverage`, `binary-size`, hygiene checks) use `actions/github-script` to post PR comments via `github.rest.issues.createComment()`. Without `pull-requests: write`, these calls fail with `403 Resource not accessible by integration`.
 
-**When adding new checks:** If a new job needs to post PR comments or interact with the PR API, it's already covered by the top-level permissions block. No per-job permissions needed unless a job requires *additional* scopes.
+**When adding new checks:** Add the job to the appropriate reusable `_*.yml` workflow. Permissions are granted at the orchestrator level when calling each reusable workflow. If a new workflow needs additional scopes, add them to the `permissions:` block on the corresponding `uses:` entry in `pr-pipeline.yml`.
 
 ---
 
@@ -449,7 +460,8 @@ Must be fixed before merge. Common causes:
 ### Check not running?
 - **Arch Review:** Requires `OPENROUTER_API_KEY` repo secret
 - **Wiki Sync:** Requires `WIKI_TOKEN` repo secret
-- **New crate not tested:** Add it to the CI matrix in `.github/workflows/ci.yml`
+- **New crate not tested:** Add it to the test matrix in `.github/workflows/_test.yml`
+- **All checks skipped:** Scope gate may have blocked — check the scope-gate output in the PR Pipeline run
 
 ---
 
@@ -458,6 +470,24 @@ Must be fixed before merge. Common causes:
 1. **Determine category** — where does it fit in the tables above?
 2. **Decide: comment or check-only** — is the output dynamic and unique per PR? → Comment. Standard tooling output? → Check only.
 3. **Decide: blocking or advisory** — can the developer safely ignore it sometimes? → Advisory (⚠️). Is it a correctness/security issue? → Blocking (✅).
-4. **Implement** — add a job to an existing workflow or create a new `.github/workflows/<name>.yml`
+4. **Implement** — add a job to the appropriate reusable workflow (`_hygiene.yml`, `_security.yml`, `_test.yml`, `_build.yml`, etc.). If ordering matters, add a `needs:` entry in `pr-pipeline.yml`.
 5. **Update this doc** — add the check to the appropriate table above
-6. **Update the issue** — reference the implementation PR in [#28](https://github.com/Demonseed-jpg/pi-daemon/issues/28)
+6. **Update the issue** — reference the implementation PR
+
+**Workflow file layout (after Phase 4):**
+
+| File | Purpose | Trigger |
+|------|---------|---------|
+| `pr-pipeline.yml` | Orchestrator — calls all reusable workflows | `pull_request` |
+| `_scope-gate.yml` | Scope gate (size, workstreams, issue ref) | `workflow_call` |
+| `_lint-format.yml` | Clippy + rustfmt + doc compile | `workflow_call` |
+| `_test.yml` | Unit + integration tests + coverage | `workflow_call` |
+| `_security.yml` | Secrets, license, unsafe, audit | `workflow_call` |
+| `_code-review.yml` | LLM reviews (arch, test, config) | `workflow_call` |
+| `_build.yml` | Release build, binary size, MSRV, bridge | `workflow_call` |
+| `_hygiene.yml` | PR hygiene, docs, commit-msg, TODOs, drift | `workflow_call` |
+| `_sandbox.yml` | Full sandbox integration test | `workflow_call` |
+| `auto-approve.yml` | Check Gate (dynamic auto-approve) | `workflow_run` |
+| `ci-main.yml` | Post-merge CI on main | `push` to main |
+| `template-sync.yml` | PR template sync | `push` to main |
+| `wiki-sync.yml` | Wiki sync | `push` to main |
