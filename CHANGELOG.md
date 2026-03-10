@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All 7 reusable workflows accept optional boolean `workflow_call` inputs with `default: true` (fail-open) (#133)
 - Jobs inside reusable workflows use `if:` to skip when their flag is false — skipped checks register as `conclusion: skipped`, satisfying the Check Gate (#133)
 
+### Fixed
+- Caller jobs in `pr-pipeline.yml` cascade-skip when all inner reusable-workflow jobs are skipped — added `if: !failure() && !cancelled()` on `test`, `build`, `code-review`, `sandbox` (#135)
+
 ### Changed
 - `pr-pipeline.yml` — classify job runs after scope-gate; all `uses:` calls pass relevant flags (#133)
 - `_lint-format.yml` — `has_rust` input gates clippy, fmt, docs-compile (#133)
