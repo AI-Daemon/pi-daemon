@@ -30,6 +30,7 @@ Checks fall into two categories:
 | **Unused Dependencies** | cargo-machete | ⚠️ | ✅ | Detects deps in Cargo.toml that are never used in code. Warning only — false positives with proc macros. |
 | **Outdated Dependencies** | cargo outdated / Dependabot | ❌ | ❌ | Reports deps with newer versions. Advisory only. |
 | **Security Audit** | cargo-audit | ✅ | ❌ | Checks deps against RustSec advisory database. Standard output in logs. |
+| **npm Security Audit** | npm audit / yarn audit | ✅ | ✅ | Checks JavaScript/TypeScript dependencies for known vulnerabilities. Supports npm, Yarn, and pnpm projects. Auto-detects package managers. |
 
 ### 🔍 Code Quality & Correctness
 
