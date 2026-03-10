@@ -396,7 +396,7 @@ jobs:
 
             // Build inline comments from actions + issues (new object format)
             // Handles both old string format and new {action/description, file, line} format
-            const inlineComments = [];
+            const rawInlineComments = [];
             const bodyActions = [];
             const bodyIssues = [];
 
@@ -405,7 +405,7 @@ jobs:
                 bodyActions.push(a);
               } else if (a && a.action) {
                 if (a.file && a.line) {
-                  inlineComments.push({ path: a.file, line: Number(a.line), body: `🔧 **Action:** ${a.action}` });
+                  rawInlineComments.push({ path: a.file, line: Number(a.line), body: `🔧 **Action:** ${a.action}`, action: a.action });
                 } else {
                   bodyActions.push(a.action);
                 }
@@ -417,10 +417,65 @@ jobs:
                 bodyIssues.push(i);
               } else if (i && i.description) {
                 if (i.file && i.line) {
-                  inlineComments.push({ path: i.file, line: Number(i.line), body: `⚠️ **Issue:** ${i.description}` });
+                  rawInlineComments.push({ path: i.file, line: Number(i.line), body: `⚠️ **Issue:** ${i.description}`, issue: i.description });
                 } else {
                   bodyIssues.push(i.description);
                 }
+              }
+            }
+
+            // Filter inline comments to only include lines that exist in the diff
+            // This prevents "Line could not be resolved" errors (#172)
+            const fs = require('fs');
+            let diffLines = {};
+            
+            try {
+              const diffContent = fs.readFileSync('/tmp/arch_diff.txt', 'utf8');
+              
+              // Parse diff to extract changed line numbers per file
+              const lines = diffContent.split('\n');
+              let currentFile = null;
+              let newLineNumber = 0;
+              
+              for (const line of lines) {
+                if (line.startsWith('=== ') && line.endsWith(' ===')) {
+                  // Extract filename: "=== path/to/file.rs ===" -> "path/to/file.rs"
+                  currentFile = line.slice(4, -4);
+                  diffLines[currentFile] = new Set();
+                  newLineNumber = 0;
+                } else if (currentFile && line.match(/^@@.*\+(\d+)/)) {
+                  // Extract starting line number from hunk header: "@@ -10,7 +10,8 @@" -> 10
+                  const match = line.match(/\+(\d+)/);
+                  if (match) {
+                    newLineNumber = parseInt(match[1], 10) - 1; // -1 because we increment before adding
+                  }
+                } else if (currentFile && (line.startsWith('+') || line.startsWith(' '))) {
+                  // Track lines that exist in the new version (+ and context lines)
+                  newLineNumber++;
+                  if (line.startsWith('+') || line.startsWith(' ')) {
+                    diffLines[currentFile].add(newLineNumber);
+                  }
+                }
+              }
+            } catch (e) {
+              core.warning(`Could not parse diff for line filtering: ${e.message}`);
+              diffLines = {}; // Fall back to no filtering
+            }
+
+            // Split comments into valid (can be inlined) and invalid (move to body)
+            const inlineComments = [];
+            const invalidComments = [];
+            
+            for (const comment of rawInlineComments) {
+              const fileLines = diffLines[comment.path];
+              if (fileLines && fileLines.has(comment.line)) {
+                // Line exists in diff - can be inlined
+                inlineComments.push({ path: comment.path, line: comment.line, body: comment.body });
+              } else {
+                // Line not in diff - move to body
+                const type = comment.action ? 'Action' : 'Issue';
+                const text = comment.action || comment.issue;
+                invalidComments.push(`**${type}** (\`${comment.path}:${comment.line}\`): ${text}`);
               }
             }
 
@@ -468,6 +523,11 @@ jobs:
             }
             if (review.notes) {
               body += `### Other thoughts\n${review.notes}\n`;
+            }
+            if (invalidComments.length > 0) {
+              body += `### File-level feedback\n`;
+              body += `_The following items couldn't be placed as inline comments because they reference lines outside the diff._\n\n`;
+              body += invalidComments.map(c => `- ${c}`).join('\n') + '\n\n';
             }
             if (inlineComments.length > 0) {
               body += `\n---\n_${inlineComments.length} inline comment${inlineComments.length === 1 ? '' : 's'} posted on specific files._\n`;
