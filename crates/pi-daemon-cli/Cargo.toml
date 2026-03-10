@@ -9,6 +9,10 @@ publish = false
 name = "pi-daemon"
 path = "src/main.rs"
 
+[lib]
+name = "pi_daemon_cli"
+path = "src/lib.rs"
+
 [dependencies]
 pi-daemon-kernel = { path = "../pi-daemon-kernel" }
 pi-daemon-api = { path = "../pi-daemon-api" }
@@ -24,7 +28,12 @@ reqwest = { workspace = true }
 dirs = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
+nix = { workspace = true }
+libc = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
 predicates = { workspace = true }
+tempfile = { workspace = true }
+serial_test = { workspace = true }
+tokio = { workspace = true }
