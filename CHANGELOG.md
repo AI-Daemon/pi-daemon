@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `PiManager` struct with discovery + auto-install orchestration, `PiStatus` type
 
 ### Fixed
+- Fix LLM code review comments not posted before job failure (#166)
+  - Reordered workflow steps in `_code-review.yml` so PR review creation happens before job termination
+  - Architectural, test quality, and configuration reviews now post detailed inline comments before failing
+  - Authors see actionable LLM feedback with file/line annotations instead of just CI error messages
+  - Affects all three review types for consistency
 - Fix sandbox broken pipe error and add dynamic step summary (#153)
   - Replace `echo "$CONTENT" | grep -q` and `echo "$CONTENT" | wc -c` with here-strings in webchat step to avoid SIGPIPE on large (~128KB) output
   - Summary step no longer hardcodes ✅ for every phase; uses `$GITHUB_ENV` markers set by each phase's final step
