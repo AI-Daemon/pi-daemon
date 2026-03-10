@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fix sandbox broken pipe error and add dynamic step summary (#153)
+  - Replace `echo "$CONTENT" | grep -q` and `echo "$CONTENT" | wc -c` with here-strings in webchat step to avoid SIGPIPE on large (~128KB) output
+  - Summary step no longer hardcodes ✅ for every phase; uses `$GITHUB_ENV` markers set by each phase's final step
+  - Summary renders a dynamic markdown table with ✅/❌ per phase and writes to `$GITHUB_STEP_SUMMARY`
 - Fix test, build, and sandbox jobs receiving false classify outputs due to missing `needs: [classify]` (#151)
   - `test`, `build`, and `sandbox` jobs in `pr-pipeline.yml` referenced `needs.classify.outputs.*` but did not include `classify` in their `needs` arrays
   - GitHub Actions only allows output access from jobs in the `needs` array, so classify flags (`has_rust`, `has_deps`, etc.) evaluated to null/false

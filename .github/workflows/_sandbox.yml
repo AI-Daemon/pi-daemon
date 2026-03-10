@@ -168,12 +168,12 @@ jobs:
 
           # Verify HTML content
           CONTENT=$(curl -sf --max-time 5 http://127.0.0.1:4200/)
-          if ! echo "$CONTENT" | grep -q "PI-DAEMON\|pi-daemon"; then
+          if ! grep -q "PI-DAEMON\|pi-daemon" <<< "$CONTENT"; then
             echo "❌ Webchat missing expected content"; exit 1; 
           fi
           
           # Check it's substantial (not just placeholder)
-          CONTENT_SIZE=$(echo "$CONTENT" | wc -c 2>/dev/null || echo "0")
+          CONTENT_SIZE=$(wc -c <<< "$CONTENT")
           echo "Webchat content size: ${CONTENT_SIZE} bytes"
           [ "$CONTENT_SIZE" -gt 50000 ] || { 
             echo "❌ Webchat content too small (${CONTENT_SIZE} bytes)"; exit 1; 
@@ -235,6 +235,7 @@ jobs:
           [ -n "$DAEMON_ADDR" ] || { echo "❌ Address not in daemon.json"; exit 1; }
           [ -n "$DAEMON_VERSION" ] || { echo "❌ Version not in daemon.json"; exit 1; }
           echo "✅ PID file management passed"
+          echo "PHASE_SMOKE=passed" >> $GITHUB_ENV
 
       # ─── Phase 2: Concurrency & Load Testing ─────────────
 
@@ -386,6 +387,7 @@ jobs:
           else
             echo "✅ Memory usage within expected range: ${FINAL_MB}MB"
           fi
+          echo "PHASE_LOAD=passed" >> $GITHUB_ENV
 
       # ─── Phase 3: Stress Testing ─────────────
 
@@ -451,6 +453,7 @@ jobs:
             echo "⚠️ Unable to measure memory growth (before: ${MEMORY_BEFORE}KB, after: ${MEMORY_AFTER}KB)"
           fi
           echo "✅ Daemon healthy after sustained load"
+          echo "PHASE_STRESS=passed" >> $GITHUB_ENV
 
       - name: "Recovery: Kill -9 and restart test"
         timeout-minutes: 3
@@ -618,6 +621,7 @@ jobs:
             exit 1
           fi
           echo "✅ Port freed after shutdown"
+          echo "PHASE_SHUTDOWN=passed" >> $GITHUB_ENV
 
       - name: "Test: CLI commands (if daemon stopped)"
         run: |
@@ -653,27 +657,34 @@ jobs:
             exit 1
           }
           echo "✅ Config command works"
+          echo "PHASE_CLI=passed" >> $GITHUB_ENV
 
       # ─── Final Summary ─────────────────────────────────────
 
       - name: "Summary: Integration test results"
         if: always()
         run: |
-          echo "=============================================="
-          echo "         Sandbox Integration Summary         "  
-          echo "=============================================="
-          echo "✅ Binary builds and runs as real daemon"
-          echo "✅ Health and status endpoints functional"
-          echo "✅ Agent CRUD lifecycle complete"
-          echo "✅ Webchat SPA loads with full content"
-          echo "✅ OpenAI-compatible API works"
-          echo "✅ PID file management functional"
-          echo "✅ Concurrent load handling verified"
-          echo "✅ Memory usage within acceptable limits"
-          echo "✅ Crash recovery works (kill -9 → restart)"
-          echo "✅ Graceful shutdown via API functional"
-          echo "✅ CLI commands handle daemon state correctly"
-          echo "=============================================="
+          # Determine status icon for each phase
+          smoke_icon=$( [ "$PHASE_SMOKE" = "passed" ] && echo "✅" || echo "❌" )
+          load_icon=$( [ "$PHASE_LOAD" = "passed" ] && echo "✅" || echo "❌" )
+          stress_icon=$( [ "$PHASE_STRESS" = "passed" ] && echo "✅" || echo "❌" )
+          shutdown_icon=$( [ "$PHASE_SHUTDOWN" = "passed" ] && echo "✅" || echo "❌" )
+          cli_icon=$( [ "$PHASE_CLI" = "passed" ] && echo "✅" || echo "❌" )
+
+          # Build summary table
+          SUMMARY="## Sandbox Integration Summary
+
+          | Phase | Status |
+          |-------|--------|
+          | Smoke tests (health, status, CRUD, webchat, OpenAI, PID) | ${smoke_icon} ${PHASE_SMOKE:-failed} |
+          | Load tests (concurrent HTTP, agents, WebSocket, memory) | ${load_icon} ${PHASE_LOAD:-failed} |
+          | Stress tests (sustained load, crash recovery) | ${stress_icon} ${PHASE_STRESS:-failed} |
+          | Shutdown tests (API shutdown, port cleanup) | ${shutdown_icon} ${PHASE_SHUTDOWN:-failed} |
+          | CLI tests (status, stop, version, config) | ${cli_icon} ${PHASE_CLI:-failed} |"
+
+          # Print to stdout and write to step summary
+          echo "$SUMMARY"
+          echo "$SUMMARY" >> $GITHUB_STEP_SUMMARY
           
           # Ensure daemon is stopped (cleanup)
           pkill -f "pi-daemon start" 2>/dev/null || true
