@@ -7,7 +7,10 @@ name: PR Pipeline
 # Phase 1: scope-gate → lint-format
 # Phase 2: scope-gate → lint-format → test
 #           scope-gate → security (parallel with lint)
-# Phase 3+: will add build, code-review, sandbox, hygiene
+# Phase 3: scope-gate → lint-format → test → code-review
+#           scope-gate → lint-format → build → sandbox
+#           scope-gate → security (parallel with lint)
+# Phase 4: will add hygiene consolidation + cleanup
 
 on:
   pull_request:
@@ -56,4 +59,30 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+    secrets: inherit
+
+  build:
+    needs: [lint-format]
+    uses: ./.github/workflows/_build.yml
+    permissions:
+      contents: read
+      pull-requests: write
+    secrets: inherit
+
+  code-review:
+    needs: [lint-format, test]
+    uses: ./.github/workflows/_code-review.yml
+    permissions:
+      contents: read
+      pull-requests: write
+      checks: write
+    secrets:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
+  sandbox:
+    needs: [build]
+    uses: ./.github/workflows/_sandbox.yml
+    permissions:
+      contents: read
+      checks: write
     secrets: inherit

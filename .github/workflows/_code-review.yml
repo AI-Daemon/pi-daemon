@@ -1,16 +1,21 @@
 name: Code Review
 
+# Reusable code review workflow — called by pr-pipeline.yml.
+# Contains file classification, architectural review (LLM), test quality
+# review (LLM), configuration review (LLM), and a summary gate job.
+#
+# Phase 3 of CI Orchestrator (#127). Code review runs after lint + tests
+# pass (enforced via needs: [lint-format, test] in the orchestrator).
+# This ensures the LLM reviews code that actually compiles and passes tests.
+
 on:
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened]
+  workflow_call:
+    secrets:
+      OPENROUTER_API_KEY:
+        required: true
 
-permissions:
-  contents: read
-  pull-requests: write
-  checks: write
-
-# Cancel in-progress runs for the same PR
+# Concurrency is primarily managed by the orchestrator (pr-pipeline.yml),
+# but we include a group here for the config review check and as a safety net.
 concurrency:
   group: code-review-${{ github.ref }}
   cancel-in-progress: true

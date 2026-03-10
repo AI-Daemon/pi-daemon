@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- CI Orchestrator Phase 3 — code review, build, sandbox as reusable workflows under the orchestrator (#127)
+- `_code-review.yml` — reusable code review workflow: file classification, architectural/test-quality/configuration LLM reviews (#127)
+- `_build.yml` — reusable build workflow: release builds (multi-target matrix), binary size, MSRV, bridge extension (#127)
+- `_sandbox.yml` — reusable sandbox workflow: real binary lifecycle, concurrency, crash recovery, shutdown testing (#127)
+- Code review depends on lint-format + test via `needs:` in orchestrator — LLM reviews only code that compiles and passes tests (#127)
+- Build depends on lint-format via `needs:` — build only runs after lint passes (#127)
+- Sandbox depends on build via `needs:` — sandbox only runs after build passes (#127)
+
+### Changed
+- `OPENROUTER_API_KEY` secret passed explicitly from orchestrator to `_code-review.yml` via `workflow_call` secrets (#127)
+- `auto-approve.yml` no longer watches "Architectural Review" (now part of "PR Pipeline") (#127)
+- `ci.yml` report job slimmed to only track remaining hygiene checks (unused-deps, crate-doc-sync, todo-tracker, docs-drift, changelog) (#127)
+
+### Removed
+- `code-review.yml` standalone workflow — replaced by `_code-review.yml` reusable workflow (#127)
+- `sandbox-test.yml` standalone workflow — replaced by `_sandbox.yml` reusable workflow (#127)
+- `build-release`, `binary-size`, `build` (gate), `test-bridge`, `msrv` jobs removed from `ci.yml` — now run via `_build.yml` (#127)
+
+### Previously Added
 - CI Orchestrator Phase 2 — tests + security as reusable workflows under the orchestrator (#126)
 - `_test.yml` — reusable test workflow: unit tests (per-crate matrix), integration tests, coverage (#126)
 - `_security.yml` — reusable security workflow: secrets scan, credential patterns, cargo-audit, license compliance, unsafe code detection, npm audit (#126)

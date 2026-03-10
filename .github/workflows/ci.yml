@@ -19,13 +19,14 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  # Minimum supported Rust version
-  MSRV: "1.94"
 
 jobs:
   # ─── NOTE: Lint moved to _lint-format.yml (called by pr-pipeline.yml) ───
   # ─── NOTE: Tests (unit, integration, coverage) moved to _test.yml (#126) ───
   # ─── NOTE: Security (audit, license, unsafe, secrets, npm) moved to _security.yml (#126) ───
+  # ─── NOTE: Build (release, binary-size, MSRV, bridge) moved to _build.yml (#127) ───
+  # ─── NOTE: Code review moved to _code-review.yml (#127) ───
+  # ─── NOTE: Sandbox moved to _sandbox.yml (#127) ───
 
   unused-deps:
     name: Unused Dependencies
@@ -197,168 +198,15 @@ jobs:
             echo "✅ Changelog check passed"
           fi
 
-  binary-size:
-    name: Binary Size
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: binary-size
-      - name: Build release
-        run: cargo build --release
-      - name: Report size
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const binary = 'target/release/pi-daemon';
-            
-            if (!fs.existsSync(binary)) {
-              console.log('Binary not found, skipping size check');
-              return;
-            }
-            
-            const size = fs.statSync(binary).size;
-            const sizeMB = (size / 1024 / 1024).toFixed(1);
-            
-            let msg = `## 📏 Binary Size: ${sizeMB} MB (${size.toLocaleString()} bytes)`;
-            if (size > 50 * 1024 * 1024) {
-              msg += `\n\n🔴 **Warning:** Binary exceeds 50MB target.`;
-            } else {
-              msg += `\n\n✅ Binary size is within acceptable range.`;
-            }
-            
-            // Find existing size comment
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-            const existing = comments.find(c => c.body.includes('📏 Binary Size'));
-            
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body: msg + '\n\n---\n*Updated on each commit*',
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: msg + '\n\n---\n*Updated on each commit*',
-              });
-            }
-
-  # ─── Build ──────────────────────────────────────────────
-  build-release:
-    name: Build (${{ matrix.target }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-          - target: aarch64-apple-darwin
-            os: macos-latest
-          # Future: add windows, more Linux arches
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: build-${{ matrix.target }}
-
-      - name: Build release
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Check binary size
-        run: |
-          BINARY="target/${{ matrix.target }}/release/pi-daemon"
-          if [ -f "$BINARY" ]; then
-            SIZE=$(stat -c%s "$BINARY" 2>/dev/null || stat -f%z "$BINARY" 2>/dev/null)
-            SIZE_MB=$((SIZE / 1024 / 1024))
-            echo "Binary size: ${SIZE_MB}MB ($SIZE bytes)"
-            if [ "$SIZE_MB" -gt 50 ]; then
-              echo "::warning::Binary size exceeds 50MB: ${SIZE_MB}MB"
-            fi
-          fi
-
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: pi-daemon-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/pi-daemon
-
-  # ─── Build Gate ─────────────────────────────────────────
-  # Required status check for branch protection (must be named "build")
-  build:
-    name: build
-    runs-on: ubuntu-latest
-    # NOTE: lint moved to _lint-format.yml, tests to _test.yml,
-    # security/license/unsafe to _security.yml — all via pr-pipeline.yml
-    needs: [unused-deps, crate-doc-sync, build-release, msrv]
-    if: always()
-    steps:
-      - name: Check results
-        run: |
-          if [ "${{ needs.build-release.result }}" != "success" ] || \
-             [ "${{ needs.msrv.result }}" != "success" ] || \
-             [ "${{ needs.unused-deps.result }}" != "success" ] || \
-             [ "${{ needs.crate-doc-sync.result }}" != "success" ]; then
-            echo "One or more required jobs failed"
-            exit 1
-          fi
-          echo "All required jobs passed"
-
-  # ─── Pi Bridge Extension ────────────────────────────────
-  test-bridge:
-    name: Pi Bridge Extension
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: extensions/pi-daemon-bridge
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - run: npm install
-      - run: npx tsc --noEmit  # Type-check only
-
-  # ─── MSRV Check ─────────────────────────────────────────
-  msrv:
-    name: Minimum Supported Rust Version
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ env.MSRV }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: msrv
-
-      - name: Check MSRV
-        run: cargo check --all-features
-
   # ─── PR Report ──────────────────────────────────────────
-  # This job waits for ALL other jobs before running
+  # This job waits for remaining CI jobs before posting summary.
+  # NOTE: build, bridge, MSRV, binary-size → _build.yml;
+  # code-review → _code-review.yml; sandbox → _sandbox.yml — all via pr-pipeline.yml
   report:
     name: PR Report
     runs-on: ubuntu-latest
     if: always() && github.event_name == 'pull_request'
-    # NOTE: lint → _lint-format.yml, tests → _test.yml,
-    # security/license/unsafe → _security.yml — all via pr-pipeline.yml
-    needs: [unused-deps, crate-doc-sync, todo-tracker, docs-drift, changelog, binary-size, build-release, test-bridge, msrv]
+    needs: [unused-deps, crate-doc-sync, todo-tracker, docs-drift, changelog]
     steps:
       - name: Collect results
         uses: actions/github-script@v7
@@ -366,16 +214,14 @@ jobs:
           script: |
             const jobs = {
               // NOTE: lint → _lint-format.yml, tests → _test.yml,
-              // security/license/unsafe → _security.yml (all in pr-pipeline.yml)
-              build: '${{ needs.build-release.result }}',
-              msrv: '${{ needs.msrv.result }}',
+              // security → _security.yml, build/MSRV/bridge → _build.yml,
+              // code-review → _code-review.yml, sandbox → _sandbox.yml
+              // — all orchestrated by pr-pipeline.yml
               'unused-deps': '${{ needs.unused-deps.result }}',
               'crate-doc-sync': '${{ needs.crate-doc-sync.result }}',
               'todo-tracker': '${{ needs.todo-tracker.result }}',
               'docs-drift': '${{ needs.docs-drift.result }}',
               changelog: '${{ needs.changelog.result }}',
-              'binary-size': '${{ needs.binary-size.result }}',
-              'test-bridge': '${{ needs.test-bridge.result }}',
             };
             
             const icon = (s) => s === 'success' ? '✅' : s === 'skipped' ? '⏭️' : '❌';
@@ -390,7 +236,8 @@ jobs:
             const body = header + " (" + commitSha + ")\n\n" +
               "| Status | Job | Result |\n" +
               "|--------|-----|---------|\n" +
-              rows + "\n\n---\n" +
+              rows + "\n\n" +
+              "**Note:** Build, tests, security, code review, and sandbox checks are now in [PR Pipeline](" + context.serverUrl + "/" + context.repo.owner + "/" + context.repo.repo + "/actions/workflows/pr-pipeline.yml).\n\n---\n" +
               "*Run: [" + context.runId + "](" + context.serverUrl + "/" + context.repo.owner + "/" + context.repo.repo + "/actions/runs/" + context.runId + ")*\n" +
               "*Commit: " + commitSha + "*";
             
@@ -407,7 +254,6 @@ jobs:
             );
             
             if (existing) {
-              // Update existing comment
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -415,7 +261,6 @@ jobs:
                 body,
               });
             } else {
-              // Create new comment
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -424,5 +269,4 @@ jobs:
               });
             }
 
-            // Set outputs for auto-approve
             core.setOutput('all-passed', allPassed);

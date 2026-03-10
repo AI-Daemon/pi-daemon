@@ -1,16 +1,21 @@
 name: Sandbox Test
 
-on:
-  pull_request:
-    branches: [main]
-    paths:
-      - 'crates/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
+# Reusable sandbox integration test workflow — called by pr-pipeline.yml.
+# Builds the release binary and runs it as a real daemon process, testing
+# health checks, agent CRUD, WebSocket, concurrency, crash recovery, and
+# graceful shutdown.
+#
+# Phase 3 of CI Orchestrator (#127). Sandbox runs after build passes
+# (enforced via needs: [build] in the orchestrator).
 
-permissions:
-  contents: read
-  checks: write
+on:
+  workflow_call:
+
+# Concurrency is primarily managed by the orchestrator (pr-pipeline.yml),
+# but we include a group here for the config review check and as a safety net.
+concurrency:
+  group: sandbox-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   sandbox:

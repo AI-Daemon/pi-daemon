@@ -131,16 +131,25 @@ When both structural and semantic checks run, a single PR comment is posted:
 
 The PR Pipeline (`pr-pipeline.yml`) is the orchestrator for PR checks. It calls reusable workflows using `uses: ./.github/workflows/_*.yml` and enforces ordering via `needs:`. If the scope gate blocks, all downstream jobs are automatically skipped.
 
-**Current pipeline (Phase 2):**
+**Current pipeline (Phase 3):**
 ```
 scope-gate
     │
-    ├─→ lint-format ─→ test (unit + integration + coverage)
+    ├─→ lint-format ─┬─→ test ─────────→ code-review (LLM reviews)
+    │                │
+    │                └─→ build ─────────→ sandbox (integration)
     │
-    └─→ security (parallel with lint — secrets, audit, license, unsafe, npm)
+    ├─→ security
+    │
+    └─→ (remaining ci.yml: unused-deps, docs-drift, etc. — still independent)
 ```
 
-Future phases (#127, #128) will add build, code-review, sandbox, and hygiene stages.
+**Key ordering guarantees:**
+- Code review only fires after lint + tests pass — the LLM never reviews broken code (#127)
+- Sandbox only runs after build passes — no point testing a binary that doesn't compile (#127)
+- Build runs in parallel with tests (both depend on lint) for faster pipeline completion
+
+Phase 4 (#128) will consolidate the remaining ci.yml hygiene checks and clean up.
 
 ### 🔬 Scope Gate
 
@@ -198,24 +207,39 @@ Security checks run as a reusable workflow (`_security.yml`) called by the PR Pi
 | **Commit Message Lint** | Custom regex | ⚠️ | ❌ | Conventional Commits format: `feat:`, `fix:`, `docs:`, `test:`, `ci:`, `refactor:`, `chore:`. |
 | **PR Description** | Custom script | ⚠️ | ❌ | Verifies PR body isn't empty and references an issue. |
 
-### 🏗️ Build & Test
+### 🏗️ Build & Release
+
+| Check | Tool | Blocking | Comment | Description |
+|-------|------|:--------:|:-------:|-------------|
+| **Release Build** | cargo build --release | ✅ | ❌ | Must compile for Linux x86_64 and macOS ARM64. Runs via `_build.yml`. |
+| **Binary Size** | stat + GitHub Script | ⚠️ | ✅ | Reports size diff. Warns if >50MB. Runs via `_build.yml`. |
+| **MSRV** | cargo check on Rust 1.94 | ✅ | ❌ | Minimum Supported Rust Version. Runs via `_build.yml`. |
+| **Pi Bridge Extension** | TypeScript compilation check | ✅ | ❌ | Compiles the TypeScript bridge extension. Type-check only. Runs via `_build.yml`. |
+
+Build checks run as a reusable workflow (`_build.yml`) called by the PR Pipeline orchestrator. Build only runs after lint passes (`needs: [lint-format]` in orchestrator).
+
+### 🧪 Tests & Coverage
 
 | Check | Tool | Blocking | Comment | Description |
 |-------|------|:--------:|:-------:|-------------|
 | **Unit Tests** | cargo test (per-crate matrix) | ✅ | ❌ | Parallel per-crate. Runs via `_test.yml`. |
 | **Integration Tests** | cargo test --test '*' | ✅ | ❌ | Cross-module tests. Runs via `_test.yml` after lint passes. |
 | **E2E Tests** | tests/e2e/ | ✅ | ❌ | Full daemon boot, HTTP/WebSocket flows. |
-| **Sandbox Integration** | Real binary lifecycle testing | ✅ | ❌ | Builds release binary, runs as actual daemon process, tests concurrency, memory, crash recovery, graceful shutdown. Only runs when core code changes. |
-| **Pi Bridge Extension** | TypeScript compilation check | ✅ | ❌ | Compiles the TypeScript bridge extension that connects pi TUI instances to pi-daemon. Type-check only. |
 | **Coverage** | cargo-llvm-cov | ❌ | ✅ | Posts per-crate coverage breakdown as PR comment. Advisory only. Runs via `_test.yml`. |
-| **Release Build** | cargo build --release | ✅ | ❌ | Must compile for Linux x86_64 and macOS ARM64. |
-| **MSRV** | cargo check on Rust 1.75 | ✅ | ❌ | Minimum Supported Rust Version. |
+
+### 🏖️ Sandbox Integration
+
+| Check | Tool | Blocking | Comment | Description |
+|-------|------|:--------:|:-------:|-------------|
+| **Sandbox Integration** | Real binary lifecycle testing | ✅ | ❌ | Builds release binary, runs as actual daemon process, tests concurrency, memory, crash recovery, graceful shutdown. Runs via `_sandbox.yml`. |
+
+Sandbox tests run as a reusable workflow (`_sandbox.yml`) called by the PR Pipeline orchestrator. Sandbox only runs after build passes (`needs: [build]` in orchestrator).
 
 ---
 
 ## Sandbox Integration Testing
 
-The **Sandbox Integration Test** (`sandbox-test.yml`) is a unique workflow that tests the actual `pi-daemon` binary in a real CI environment, catching deployment issues that in-process tests cannot detect.
+The **Sandbox Integration Test** (`_sandbox.yml`) is a reusable workflow that tests the actual `pi-daemon` binary in a real CI environment, catching deployment issues that in-process tests cannot detect. Called by the PR Pipeline orchestrator after build passes (`needs: [build]`).
 
 ### What Makes It Different
 - **Real Binary**: Builds `cargo build --release` and executes actual `pi-daemon` command
@@ -273,8 +297,8 @@ The sandbox test includes comprehensive memory monitoring to detect leaks and va
 - **Expected range**: 20-50MB for idle daemon (Rust binary + Axum + tokio + embedded assets)
 
 ### When It Runs
-- **Trigger**: Pull requests that change `crates/**`, `Cargo.toml`, or `Cargo.lock`
-- **Skip**: Documentation-only changes (no unnecessary overhead)
+- **Trigger**: Called by PR Pipeline orchestrator after build passes (`needs: [build]`)
+- **Skip**: Skipped if build fails or scope gate blocks
 - **Timeout**: 10 minutes (prevents hung processes from blocking CI)
 
 ### Future Enhancements
@@ -286,7 +310,7 @@ The sandbox test includes comprehensive memory monitoring to detect leaks and va
 
 ## 🎯 Unified Code Review System
 
-Comprehensive code review system with intelligent file classification and specialized review workflows. Uses **Gemini 2.5 Flash** via OpenRouter for AI-powered analysis.
+Comprehensive code review system with intelligent file classification and specialized review workflows. Uses **Gemini 2.5 Flash** via OpenRouter for AI-powered analysis. Runs as a reusable workflow (`_code-review.yml`) called by the PR Pipeline orchestrator. Code review only runs after lint + tests pass (`needs: [lint-format, test]` in orchestrator), ensuring the LLM never reviews code that doesn't compile or pass tests (#127).
 
 **🔍 Intelligent File Classification:**
 - **🏗️ Architectural Review:** Source code files (.rs, .ts, .js) containing architectural decisions

@@ -27,7 +27,6 @@ on:
       - "Commit Message Secret Scan"
       - "PR Hygiene"
       - "Documentation"
-      - "Architectural Review"
       - "PR Pipeline"
     types: [completed]
   workflow_dispatch:
