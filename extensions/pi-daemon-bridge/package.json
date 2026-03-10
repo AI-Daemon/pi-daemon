@@ -1,0 +1,17 @@
+{
+  "name": "@demonseed-jpg/pi-daemon-bridge",
+  "version": "0.1.0",
+  "description": "Connects pi to the pi-daemon kernel",
+  "type": "module",
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": ">=0.56.1"
+  },
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "0.56.2",
+    "typescript": "^5.8.0"
+  }
+}

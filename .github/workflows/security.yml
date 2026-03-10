@@ -32,7 +32,7 @@ jobs:
             --no-update \
             --fail \
             --only-verified \
-            --exclude-paths=<(echo -e "target/\n.git/\nCargo.lock") \
+            --exclude-paths=<(echo -e "target/\n.git/\nCargo.lock\nnode_modules/") \
             2>&1 | tee /tmp/trufflehog_output.txt
         continue-on-error: true
 
