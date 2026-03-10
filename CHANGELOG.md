@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - All review jobs now always comment with explanatory skip reasons (#106)
 - Implement real LLM analysis for Architectural and Test Quality reviews (#110)
 - Pi bridge extension (TypeScript) — connects pi TUI instances to pi-daemon kernel (#12)
+- npm security audit for JavaScript/TypeScript dependencies (#99)
 - Comprehensive CI/CD pipeline with 25+ automated checks (#24)
 - Supply chain security checks with cargo-deny (#34)
 - Code quality checks: unsafe detection, TODO tracking, docs drift, binary size (#35)

@@ -153,3 +153,142 @@ jobs:
             }
 
             core.setFailed('Potential credential patterns found');
+
+  # ─── npm/Yarn Dependency Security ───────────────────────
+  npm-security:
+    name: npm Security Audit
+    runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for npm/yarn projects
+        id: detect
+        run: |
+          # Find directories containing package.json or lock files
+          PACKAGE_DIRS=$(find . -name 'package.json' -o -name 'package-lock.json' -o -name 'yarn.lock' -o -name 'pnpm-lock.yaml' | xargs -I {} dirname {} | sort -u | grep -v node_modules || true)
+          
+          if [ -n "$PACKAGE_DIRS" ]; then
+            echo "found=true" >> $GITHUB_OUTPUT
+            echo "$PACKAGE_DIRS" > /tmp/npm_dirs.txt
+            echo "Found npm/yarn projects:"
+            echo "$PACKAGE_DIRS"
+          else
+            echo "found=false" >> $GITHUB_OUTPUT
+            echo "No npm/yarn projects found"
+          fi
+
+      - name: Setup Node.js
+        if: steps.detect.outputs.found == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run npm security audits
+        if: steps.detect.outputs.found == 'true'
+        id: audit
+        run: |
+          OVERALL_STATUS=0
+          AUDIT_RESULTS=""
+          
+          while IFS= read -r dir; do
+            if [ -n "$dir" ] && [ -d "$dir" ]; then
+              echo "=== Auditing $dir ==="
+              cd "$GITHUB_WORKSPACE/$dir"
+              
+              # Detect package manager
+              if [ -f "pnpm-lock.yaml" ]; then
+                echo "Using pnpm for $dir"
+                npx pnpm audit --audit-level moderate || STATUS=$?
+              elif [ -f "yarn.lock" ]; then
+                echo "Using Yarn for $dir"
+                npx yarn audit --level moderate || STATUS=$?
+              else
+                echo "Using npm for $dir"
+                # Install dependencies first if needed
+                if [ ! -d "node_modules" ] && [ -f "package.json" ]; then
+                  npm ci --only=prod --ignore-scripts 2>/dev/null || npm install --only=prod --ignore-scripts 2>/dev/null || true
+                fi
+                npm audit --audit-level moderate || STATUS=$?
+              fi
+              
+              # Capture status for this directory
+              if [ "${STATUS:-0}" -ne 0 ]; then
+                OVERALL_STATUS=1
+                AUDIT_RESULTS="${AUDIT_RESULTS}❌ $dir: vulnerabilities found\n"
+              else
+                AUDIT_RESULTS="${AUDIT_RESULTS}✅ $dir: no vulnerabilities\n"
+              fi
+              
+              cd "$GITHUB_WORKSPACE"
+            fi
+          done < /tmp/npm_dirs.txt
+          
+          # Save results for reporting
+          echo -e "$AUDIT_RESULTS" > /tmp/npm_audit_results.txt
+          
+          if [ "$OVERALL_STATUS" -ne 0 ]; then
+            echo "vulnerabilities=true" >> $GITHUB_OUTPUT
+            echo "::error::npm security vulnerabilities found"
+            exit 1
+          else
+            echo "vulnerabilities=false" >> $GITHUB_OUTPUT
+            echo "No npm security vulnerabilities found"
+          fi
+        continue-on-error: true
+
+      - name: Report npm vulnerabilities
+        if: steps.detect.outputs.found == 'true' && steps.audit.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let results = '';
+            try { 
+              results = fs.readFileSync('/tmp/npm_audit_results.txt', 'utf8'); 
+            } catch { 
+              results = 'npm audit results not available'; 
+            }
+
+            const body = `## 🔴 npm Security Vulnerabilities
+
+            npm security audit found vulnerabilities in JavaScript/TypeScript dependencies.
+
+            ### Results Summary
+            ${results}
+
+            ### How to fix
+            1. **Run locally:** \`npm audit\` or \`yarn audit\` in affected directories
+            2. **Auto-fix:** \`npm audit fix\` for automated updates
+            3. **Manual review:** Check \`npm audit --audit-level moderate\` output
+            4. **Update deps:** Update vulnerable packages to patched versions
+
+            ### Package Manager Commands
+            - **npm:** \`npm audit\` → \`npm audit fix\`
+            - **Yarn:** \`yarn audit\` → \`yarn upgrade\`  
+            - **pnpm:** \`pnpm audit\` → \`pnpm update\`
+
+            ---
+            *🔒 Automated npm security audit*`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c => c.body && c.body.includes('npm Security Vulnerabilities'));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                comment_id: existing.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.issue.number, body,
+              });
+            }
+
+            core.setFailed('npm security vulnerabilities found');
