@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- New `pi-daemon-pi-manager` crate — managed Pi process lifecycle (#161)
+  - `PiManagerConfig` with `[pi]` section in `config.toml` (`binary_path`, `min_version`, `auto_install`, `auto_start`, `pool_size`, `working_directory`)
+  - Pi binary discovery: find on `$PATH`, parse `pi --version`, semver compatibility check
+  - Pi auto-installer: Node.js/npm pre-flight, `npm install -g @mariozechner/pi-coding-agent`
+  - `PiManager` struct with discovery + auto-install orchestration, `PiStatus` type
+
 ### Fixed
 - Fix sandbox broken pipe error and add dynamic step summary (#153)
   - Replace `echo "$CONTENT" | grep -q` and `echo "$CONTENT" | wc -c` with here-strings in webchat step to avoid SIGPIPE on large (~128KB) output

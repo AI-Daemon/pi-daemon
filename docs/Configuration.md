@@ -52,6 +52,15 @@ ollama_base_url = "http://localhost:11434"
 personal_access_token = ""
 api_base_url = "https://api.github.com"
 default_owner = ""
+
+[pi]
+# Managed Pi agent configuration
+binary_path = ""           # auto-discover on $PATH if empty
+min_version = "0.56.0"     # minimum Pi version required
+auto_install = true        # install Pi via npm if not found
+auto_start = true          # spawn managed Pi on daemon start
+pool_size = 1              # number of managed Pi instances
+working_directory = "~"    # working directory for managed Pi
 ```
 
 > **Note:** Future phases will add `[wire]`, `[channels]`, and other sections.

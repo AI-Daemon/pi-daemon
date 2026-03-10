@@ -21,6 +21,7 @@ pi-daemon/
 │   ├── pi-daemon-api/            # Axum HTTP + WebSocket server, webchat UI
 │   ├── pi-daemon-cli/            # Binary entry point + CLI commands
 │   ├── pi-daemon-test-utils/     # Shared test helpers
+│   ├── pi-daemon-pi-manager/     # Managed Pi process lifecycle — discovery, install, spawn, health
 │   ├── pi-daemon-memory/         # SQLite WAL memory substrate (Phase 2)
 │   ├── pi-daemon-hands/          # Autonomous capability packages (Phase 4)
 │   ├── pi-daemon-wire/           # Agent-to-agent P2P networking (Phase 5)
@@ -39,8 +40,10 @@ pi-daemon-cli
   │     │     ├── pi-daemon-types
   │     │     └── pi-daemon-memory
   │     ├── pi-daemon-types
+  │     ├── pi-daemon-pi-manager
   │     ├── pi-daemon-hands
   │     └── pi-daemon-channels
+  ├── pi-daemon-pi-manager
   └── pi-daemon-kernel
 ```
 
