@@ -123,11 +123,26 @@ When both structural and semantic checks run, a single PR comment is posted:
 | **Template Sync** | template-sync.yml | ❌ | ❌ | Validates PR template structure matches current crates/workflows. Runs on push to main + weekly cron. |
 | **Local Test Evidence** | Custom script | ⚠️ | ❌ | Warns if PR description lacks evidence of local `scripts/test-local.sh` execution or crate checkboxes. |
 
+### 🔀 PR Pipeline (Orchestrator)
+
+| Check | Tool | Blocking | Comment | Description |
+|-------|------|:--------:|:-------:|-------------|
+| **PR Pipeline** | `pr-pipeline.yml` | ✅ | ❌ | Orchestrator that calls reusable workflows in dependency order. Scope gate runs first; lint depends on it via `needs:`. |
+
+The PR Pipeline (`pr-pipeline.yml`) is the orchestrator for PR checks. It calls reusable workflows using `uses: ./.github/workflows/_*.yml` and enforces ordering via `needs:`. If the scope gate blocks, all downstream jobs are automatically skipped.
+
+**Current pipeline (Phase 1):**
+```
+scope-gate → lint-format (clippy + fmt + docs compile)
+```
+
+Future phases (#126, #127, #128) will add test, security, build, code-review, and sandbox stages.
+
 ### 🔬 Scope Gate
 
 | Check | Tool | Blocking | Comment | Description |
 |-------|------|:--------:|:-------:|-------------|
-| **Scope Gate** | `scripts/scope-gate.sh` | ✅ | ✅ | Mechanical PR scope check. Pure bash, no LLM, <15 seconds. See `scope-gate.yml`. |
+| **Scope Gate** | `scripts/scope-gate.sh` | ✅ | ✅ | Mechanical PR scope check. Pure bash, no LLM, <15 seconds. See `_scope-gate.yml`. |
 
 The Scope Gate evaluates whether a PR is focused enough to review reliably. It runs three checks:
 
@@ -137,7 +152,17 @@ The Scope Gate evaluates whether a PR is focused enough to review reliably. It r
 
 On block/warn, a PR comment is posted with the workstream breakdown and guidance on how to split. On pass, no comment (no clutter). If a previously-blocked PR is fixed and now passes, the stale comment is deleted.
 
-**Architecture:** The logic lives in `scripts/scope-gate.sh` — a standalone bash script testable locally via `scripts/test-scope-gate.sh` (27 test cases). The workflow (`scope-gate.yml`) is a thin wrapper that gathers PR metadata and calls the script.
+**Architecture:** The logic lives in `scripts/scope-gate.sh` — a standalone bash script testable locally via `scripts/test-scope-gate.sh` (27 test cases). The workflow (`_scope-gate.yml`) is a thin reusable wrapper that gathers PR metadata and calls the script.
+
+### 🧹 Lint & Format
+
+| Check | Tool | Blocking | Comment | Description |
+|-------|------|:--------:|:-------:|-------------|
+| **Clippy** | cargo clippy | ✅ | ❌ | Zero warnings policy (`-D warnings`). Runs via `_lint-format.yml`. |
+| **Rustfmt** | cargo fmt | ✅ | ❌ | Formatting check. Runs via `_lint-format.yml`. |
+| **Docs Compile** | cargo doc | ✅ | ❌ | Ensures docs compile without warnings. Runs via `_lint-format.yml`. |
+
+Lint and format checks run as a reusable workflow (`_lint-format.yml`) called by the PR Pipeline orchestrator. They only run after the scope gate passes.
 
 ### 🧹 PR Hygiene
 

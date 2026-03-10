@@ -3,6 +3,12 @@ name: Lint & Format
 on:
   workflow_call:
 
+# Concurrency is primarily managed by the orchestrator (pr-pipeline.yml),
+# but we include a group here for the config review check and as a safety net.
+concurrency:
+  group: lint-format-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 

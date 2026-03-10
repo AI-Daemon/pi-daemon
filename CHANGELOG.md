@@ -8,12 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- CI Orchestrator Phase 1 — `pr-pipeline.yml` orchestrates reusable workflows with `needs:` ordering (#125)
+- `_scope-gate.yml` — reusable scope gate workflow (`on: workflow_call`) with `pr_number`/`pr_body` inputs (#125)
+- `_lint-format.yml` — reusable lint/format workflow: Clippy, Rustfmt, docs compile (#125)
 - Scope Gate Phase 1 workflow (`.github/workflows/scope-gate.yml`) — mechanical PR size + workstream checks (#119)
 - `scripts/scope-gate.sh` — standalone scope gate logic with 3 checks: issue reference, size thresholds, workstream cohesion (#119)
 - `scripts/test-scope-gate.sh` — 27 test cases for scope gate covering all thresholds and edge cases (#119)
 
 ### Changed
+- Scope gate blocks lint via `needs:` — if scope gate fails, lint is skipped (#125)
+- Lint job extracted from `ci.yml` into `_lint-format.yml` reusable workflow (#125)
+- `auto-approve.yml` now watches "PR Pipeline" in addition to existing workflows (#125)
 - PR size check removed from `pr-hygiene.yml` and consolidated into scope gate (#119)
+
+### Removed
+- `scope-gate.yml` standalone workflow — replaced by `_scope-gate.yml` reusable workflow (#125)
+- `lint` job removed from `ci.yml` — now runs via `_lint-format.yml` (#125)
 
 ### Previously Added
 - `FullTestServer` in test-utils — centralized API test server replacing duplicated boilerplate (#116)
