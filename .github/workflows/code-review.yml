@@ -173,20 +173,127 @@ jobs:
             fi
           done < source_files.txt > /tmp/arch_diff.txt
           
-          # Create auto-pass result for now (LLM integration can be added later)
-          jq -n \
-            --arg count "${{ needs.classify.outputs.source_count }}" \
-            '{
-              "verdict": "PASS",
-              "summary": ("Architectural review: " + $count + " source files reviewed"),
-              "checks": [
-                {"name": "File Classification", "status": "pass", "detail": ("Source files detected: " + $count)}
-              ],
-              "issues": [],
-              "notes": "Enhanced architectural review with intelligent file filtering active. LLM integration ready for enhancement.",
-              "checklist_verdict": "PASS",
-              "expert_verdict": "PASS"
-            }' > /tmp/arch_review_result.json
+          # Create the architectural review prompt
+          echo "You are an architectural code reviewer for the pi-daemon project — a Rust-based agent kernel daemon." > /tmp/arch_prompt.txt
+          echo "" >> /tmp/arch_prompt.txt
+          echo "Your job is to review a pull request diff against the project's architecture documentation and report whether the changes conform to the documented architecture, conventions, and best practices." >> /tmp/arch_prompt.txt
+          echo "" >> /tmp/arch_prompt.txt
+          echo "## Dual-Layer Review Framework" >> /tmp/arch_prompt.txt
+          echo "Perform BOTH layers of analysis. BOTH must pass for overall PASS verdict." >> /tmp/arch_prompt.txt
+          echo "" >> /tmp/arch_prompt.txt
+          echo "### Layer 1: Technical Compliance Checklist" >> /tmp/arch_prompt.txt
+          echo "1. **Crate Structure**: Do new files/modules live in the correct crate per the architecture doc? Is the dependency graph respected (types → kernel → api → cli, no cycles)?" >> /tmp/arch_prompt.txt
+          echo "2. **Concurrency Patterns**: Does the code use DashMap (not Mutex<HashMap>) for concurrent maps? broadcast channels for pub/sub? Arc for shared state?" >> /tmp/arch_prompt.txt
+          echo "3. **Error Handling**: Does the code use thiserror for typed errors and anyhow at boundaries? No unwrap() in library code (only in tests)?" >> /tmp/arch_prompt.txt
+          echo "4. **Naming Conventions**: snake_case everywhere? Types match their module names? Test naming follows test_<thing>_<behavior>?" >> /tmp/arch_prompt.txt
+          echo "5. **API Conventions**: Do new routes follow the existing pattern (State extractor, Json responses, proper status codes)? Are they documented in API-Reference.md?" >> /tmp/arch_prompt.txt
+          echo "6. **Testing**: Are there unit tests for new public functions? Integration tests for new API endpoints? Do tests use the test-utils helpers (test_kernel, test_server, TestClient)?" >> /tmp/arch_prompt.txt
+          echo "7. **Security**: No unwrap() on user input. API key middleware applied to new routes. Sensitive values not logged." >> /tmp/arch_prompt.txt
+          echo "" >> /tmp/arch_prompt.txt
+          echo "### Layer 2: Architectural Expert Analysis" >> /tmp/arch_prompt.txt
+          echo "Beyond checklist compliance, evaluate:" >> /tmp/arch_prompt.txt
+          echo "- **System Design Impact**: How do these changes affect overall architecture?" >> /tmp/arch_prompt.txt
+          echo "- **Maintainability**: Will this code be easy to maintain and evolve?" >> /tmp/arch_prompt.txt
+          echo "- **Performance Implications**: Any potential performance bottlenecks or improvements?" >> /tmp/arch_prompt.txt
+          echo "- **Integration Quality**: How well does this integrate with existing patterns?" >> /tmp/arch_prompt.txt
+          echo "- **Design Consistency**: Does this follow established design principles?" >> /tmp/arch_prompt.txt
+          echo "" >> /tmp/arch_prompt.txt
+          echo "## Response Format (JSON only, no markdown wrapping):" >> /tmp/arch_prompt.txt
+          echo '{' >> /tmp/arch_prompt.txt
+          echo '  "verdict": "PASS|FAIL",  ' >> /tmp/arch_prompt.txt
+          echo '  "summary": "Brief overall summary of architectural review",  ' >> /tmp/arch_prompt.txt
+          echo '  "checklist_verdict": "PASS|FAIL",  ' >> /tmp/arch_prompt.txt
+          echo '  "expert_verdict": "PASS|FAIL",  ' >> /tmp/arch_prompt.txt
+          echo '  "checks": [  ' >> /tmp/arch_prompt.txt
+          echo '    {"name": "Check Name", "status": "pass|fail|warning", "detail": "Explanation"}  ' >> /tmp/arch_prompt.txt
+          echo '  ],  ' >> /tmp/arch_prompt.txt
+          echo '  "issues": ["List of specific issues found"],  ' >> /tmp/arch_prompt.txt
+          echo '  "notes": "Additional architectural observations"  ' >> /tmp/arch_prompt.txt
+          echo '}' >> /tmp/arch_prompt.txt
+
+          # Prepare the input (diff + context)
+          echo "## Context" > /tmp/arch_input.txt
+          echo "Pull Request: Source code changes to pi-daemon" >> /tmp/arch_input.txt
+          echo "Files: ${{ needs.classify.outputs.source_count }} source files (.rs, .ts, .js)" >> /tmp/arch_input.txt
+          echo "" >> /tmp/arch_input.txt
+          echo "## Diff to Review" >> /tmp/arch_input.txt
+          cat /tmp/arch_diff.txt >> /tmp/arch_input.txt
+
+          # Size check
+          DIFF_SIZE=$(wc -c < /tmp/arch_diff.txt)
+          echo "Architectural diff size: $DIFF_SIZE bytes"
+          
+          if [ "$DIFF_SIZE" -gt 100000 ]; then
+            echo "Diff too large for LLM analysis (>100KB), creating size-based fallback"
+            jq -n \
+              --arg count "${{ needs.classify.outputs.source_count }}" \
+              --arg size "$DIFF_SIZE" \
+              '{
+                "verdict": "PASS",
+                "summary": ("Large architectural diff (" + $size + " bytes) — manual review recommended"),
+                "checks": [
+                  {"name": "File Classification", "status": "pass", "detail": ("Source files: " + $count)},
+                  {"name": "Size Check", "status": "warning", "detail": ("Diff size " + $size + " bytes exceeds LLM limit")}
+                ],
+                "issues": ["Diff too large for automated LLM analysis — manual architectural review recommended"],
+                "notes": "Intelligent file filtering active. Large diff required fallback to size-based review.",
+                "checklist_verdict": "PASS",
+                "expert_verdict": "PASS"
+              }' > /tmp/arch_review_result.json
+          else
+            # Call OpenRouter API for architectural analysis
+            echo "Running LLM architectural analysis..."
+            
+            SYSTEM=$(cat /tmp/arch_prompt.txt)
+            USER_MSG=$(cat /tmp/arch_input.txt)
+
+            RESPONSE=$(curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
+              -H "HTTP-Referer: https://github.com/AI-Daemon/pi-daemon" \
+              -H "X-Title: pi-daemon-arch-review" \
+              -d "$(jq -n \
+                --arg system "$SYSTEM" \
+                --arg user "$USER_MSG" \
+                '{
+                  "model": "google/gemini-2.5-flash",
+                  "messages": [
+                    {"role": "system", "content": $system},
+                    {"role": "user", "content": $user}
+                  ],
+                  "temperature": 0.1,
+                  "max_tokens": 4096
+                }')")
+
+            # Extract and clean the response
+            REVIEW=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty')
+            
+            if [ -z "$REVIEW" ]; then
+              echo "::warning::LLM returned empty response for architectural review"
+              echo "$RESPONSE" | jq . 2>/dev/null || echo "$RESPONSE"
+              # Create fallback review
+              jq -n \
+                --arg count "${{ needs.classify.outputs.source_count }}" \
+                '{
+                  "verdict": "PASS",
+                  "summary": ("Architectural review fallback — LLM unavailable for " + $count + " source files"),
+                  "checks": [
+                    {"name": "File Classification", "status": "pass", "detail": ("Source files: " + $count)},
+                    {"name": "LLM Analysis", "status": "warning", "detail": "OpenRouter API returned empty response"}
+                  ],
+                  "issues": ["LLM architectural analysis unavailable — manual review recommended"],
+                  "notes": "Intelligent file filtering active. LLM fallback due to API issue.",
+                  "checklist_verdict": "PASS",
+                  "expert_verdict": "PASS"
+                }' > /tmp/arch_review_result.json
+            else
+              # Clean the response (remove markdown code blocks)
+              REVIEW=$(echo "$REVIEW" | sed 's/^```json//; s/^```//; s/```$//' | sed '/^$/d')
+              
+              # Save the review
+              echo "$REVIEW" > /tmp/arch_review_result.json
+            fi
+          fi
           
           echo "Architectural review completed"
 
@@ -310,20 +417,127 @@ jobs:
             fi
           done < test_files.txt > /tmp/test_diff.txt
           
-          # Create auto-pass result for now (LLM integration can be added later)
-          jq -n \
-            --arg count "${{ needs.classify.outputs.test_count }}" \
-            '{
-              "verdict": "PASS",
-              "summary": ("Test quality review: " + $count + " test files reviewed"),
-              "checks": [
-                {"name": "File Classification", "status": "pass", "detail": ("Test files detected: " + $count)}
-              ],
-              "issues": [],
-              "notes": "Test quality review with intelligent test file filtering active. Dual-layer framework ready for enhancement.",
-              "checklist_verdict": "PASS",
-              "expert_verdict": "PASS"
-            }' > /tmp/test_review_result.json
+          # Create the test quality review prompt
+          echo "You are a test quality expert reviewing test code changes for the pi-daemon project — a Rust-based agent kernel daemon." > /tmp/test_prompt.txt
+          echo "" >> /tmp/test_prompt.txt
+          echo "Your job is to analyze test file changes and evaluate test quality, coverage patterns, and testing best practices." >> /tmp/test_prompt.txt
+          echo "" >> /tmp/test_prompt.txt
+          echo "## Dual-Layer Review Framework" >> /tmp/test_prompt.txt
+          echo "Perform BOTH layers of analysis. BOTH must pass for overall PASS verdict." >> /tmp/test_prompt.txt
+          echo "" >> /tmp/test_prompt.txt
+          echo "### Layer 1: Technical Compliance Checklist" >> /tmp/test_prompt.txt
+          echo "1. **Test Structure**: Proper test module organization? Tests in correct files (test_*.rs, *_test.go, *.test.ts, spec/)?" >> /tmp/test_prompt.txt
+          echo "2. **Naming Conventions**: Test functions follow test_<thing>_<behavior> pattern?" >> /tmp/test_prompt.txt
+          echo "3. **Test Helpers**: Uses project test-utils helpers (test_kernel, test_server, TestClient) where appropriate?" >> /tmp/test_prompt.txt
+          echo "4. **Error Testing**: Tests both success and failure cases? Error conditions properly tested?" >> /tmp/test_prompt.txt
+          echo "5. **Assertions**: Clear, meaningful assertions? No flaky or timing-dependent tests?" >> /tmp/test_prompt.txt
+          echo "6. **Isolation**: Tests are independent? Proper setup/teardown? No shared state issues?" >> /tmp/test_prompt.txt
+          echo "7. **Coverage**: New public functions have corresponding unit tests? API endpoints have integration tests?" >> /tmp/test_prompt.txt
+          echo "" >> /tmp/test_prompt.txt
+          echo "### Layer 2: Test Quality Expert Analysis" >> /tmp/test_prompt.txt
+          echo "Beyond checklist compliance, evaluate:" >> /tmp/test_prompt.txt
+          echo "- **Test Effectiveness**: Do tests actually validate the intended behavior?" >> /tmp/test_prompt.txt
+          echo "- **Edge Case Coverage**: Are boundary conditions and edge cases tested?" >> /tmp/test_prompt.txt
+          echo "- **Maintainability**: Are tests readable, clear, and easy to maintain?" >> /tmp/test_prompt.txt
+          echo "- **Performance**: Any performance testing where appropriate?" >> /tmp/test_prompt.txt
+          echo "- **Integration Quality**: Do integration tests cover realistic scenarios?" >> /tmp/test_prompt.txt
+          echo "" >> /tmp/test_prompt.txt
+          echo "## Response Format (JSON only, no markdown wrapping):" >> /tmp/test_prompt.txt
+          echo '{' >> /tmp/test_prompt.txt
+          echo '  "verdict": "PASS|FAIL",  ' >> /tmp/test_prompt.txt
+          echo '  "summary": "Brief overall summary of test quality review",  ' >> /tmp/test_prompt.txt
+          echo '  "checklist_verdict": "PASS|FAIL",  ' >> /tmp/test_prompt.txt
+          echo '  "expert_verdict": "PASS|FAIL",  ' >> /tmp/test_prompt.txt
+          echo '  "checks": [  ' >> /tmp/test_prompt.txt
+          echo '    {"name": "Check Name", "status": "pass|fail|warning", "detail": "Explanation"}  ' >> /tmp/test_prompt.txt
+          echo '  ],  ' >> /tmp/test_prompt.txt
+          echo '  "issues": ["List of specific test quality issues found"],  ' >> /tmp/test_prompt.txt
+          echo '  "notes": "Additional test quality observations"  ' >> /tmp/test_prompt.txt
+          echo '}' >> /tmp/test_prompt.txt
+
+          # Prepare the input (test diff + context)
+          echo "## Context" > /tmp/test_input.txt
+          echo "Pull Request: Test file changes to pi-daemon" >> /tmp/test_input.txt
+          echo "Files: ${{ needs.classify.outputs.test_count }} test files (test_*.rs, *_test.go, *.test.ts, spec/)" >> /tmp/test_input.txt
+          echo "" >> /tmp/test_input.txt
+          echo "## Test Diff to Review" >> /tmp/test_input.txt
+          cat /tmp/test_diff.txt >> /tmp/test_input.txt
+
+          # Size check
+          DIFF_SIZE=$(wc -c < /tmp/test_diff.txt)
+          echo "Test diff size: $DIFF_SIZE bytes"
+          
+          if [ "$DIFF_SIZE" -gt 100000 ]; then
+            echo "Test diff too large for LLM analysis (>100KB), creating size-based fallback"
+            jq -n \
+              --arg count "${{ needs.classify.outputs.test_count }}" \
+              --arg size "$DIFF_SIZE" \
+              '{
+                "verdict": "PASS",
+                "summary": ("Large test diff (" + $size + " bytes) — manual review recommended"),
+                "checks": [
+                  {"name": "File Classification", "status": "pass", "detail": ("Test files: " + $count)},
+                  {"name": "Size Check", "status": "warning", "detail": ("Diff size " + $size + " bytes exceeds LLM limit")}
+                ],
+                "issues": ["Test diff too large for automated LLM analysis — manual test quality review recommended"],
+                "notes": "Intelligent test file filtering active. Large diff required fallback to size-based review.",
+                "checklist_verdict": "PASS",
+                "expert_verdict": "PASS"
+              }' > /tmp/test_review_result.json
+          else
+            # Call OpenRouter API for test quality analysis
+            echo "Running LLM test quality analysis..."
+            
+            SYSTEM=$(cat /tmp/test_prompt.txt)
+            USER_MSG=$(cat /tmp/test_input.txt)
+
+            RESPONSE=$(curl -s -X POST "https://openrouter.ai/api/v1/chat/completions" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
+              -H "HTTP-Referer: https://github.com/AI-Daemon/pi-daemon" \
+              -H "X-Title: pi-daemon-test-review" \
+              -d "$(jq -n \
+                --arg system "$SYSTEM" \
+                --arg user "$USER_MSG" \
+                '{
+                  "model": "google/gemini-2.5-flash",
+                  "messages": [
+                    {"role": "system", "content": $system},
+                    {"role": "user", "content": $user}
+                  ],
+                  "temperature": 0.1,
+                  "max_tokens": 4096
+                }')")
+
+            # Extract and clean the response
+            REVIEW=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // empty')
+            
+            if [ -z "$REVIEW" ]; then
+              echo "::warning::LLM returned empty response for test quality review"
+              echo "$RESPONSE" | jq . 2>/dev/null || echo "$RESPONSE"
+              # Create fallback review
+              jq -n \
+                --arg count "${{ needs.classify.outputs.test_count }}" \
+                '{
+                  "verdict": "PASS",
+                  "summary": ("Test quality review fallback — LLM unavailable for " + $count + " test files"),
+                  "checks": [
+                    {"name": "File Classification", "status": "pass", "detail": ("Test files: " + $count)},
+                    {"name": "LLM Analysis", "status": "warning", "detail": "OpenRouter API returned empty response"}
+                  ],
+                  "issues": ["LLM test quality analysis unavailable — manual review recommended"],
+                  "notes": "Intelligent test file filtering active. LLM fallback due to API issue.",
+                  "checklist_verdict": "PASS",
+                  "expert_verdict": "PASS"
+                }' > /tmp/test_review_result.json
+            else
+              # Clean the response (remove markdown code blocks)
+              REVIEW=$(echo "$REVIEW" | sed 's/^```json//; s/^```//; s/```$//' | sed '/^$/d')
+              
+              # Save the review
+              echo "$REVIEW" > /tmp/test_review_result.json
+            fi
+          fi
           
           echo "Test quality review completed"
 
