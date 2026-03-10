@@ -1,16 +1,22 @@
 #!/usr/bin/env bash
-# scope-gate.sh — Mechanical PR scope gate (Phase 1)
+# scope-gate.sh — Mechanical PR scope gate (Phase 1 + Phase 2)
 #
 # Evaluates whether a PR is focused enough to review by checking:
-#   1. Issue reference (required)
-#   2. Size thresholds (lines changed)
-#   3. Workstream cohesion (distinct areas of concern)
+#   Phase 1:
+#     1. Issue reference (required)
+#     2. Size thresholds (lines changed)
+#     3. Workstream cohesion (distinct areas of concern)
+#   Phase 2:
+#     4. Issue scope detection (multi-concern issues)
+#     5. Workstream vs issue alignment (PR changes match issue?)
 #
 # Inputs (env vars):
-#   PR_BODY       — full PR description text
-#   ADDITIONS     — number of added lines
-#   DELETIONS     — number of deleted lines
-#   CHANGED_FILES — newline-separated list of changed file paths
+#   PR_BODY        — full PR description text
+#   ADDITIONS      — number of added lines
+#   DELETIONS      — number of deleted lines
+#   CHANGED_FILES  — newline-separated list of changed file paths
+#   ISSUE_TITLE    — (Phase 2) issue title from gh issue view (optional)
+#   ISSUE_BODY_TEXT — (Phase 2) issue body from gh issue view (optional)
 #
 # Outputs (env vars, written to $GITHUB_OUTPUT if set):
 #   VERDICT       — "pass" | "warn" | "block"
@@ -126,6 +132,107 @@ elif [ "$MEANINGFUL_COUNT" -ge 3 ] && [ "$TOTAL" -gt 500 ]; then
   warn "PR spans ${MEANINGFUL_COUNT} workstreams at ${TOTAL} lines ($(IFS=', '; echo "${MEANINGFUL_NAMES[*]}")). Consider splitting."
 fi
 
+# ── Phase 2: Issue Alignment Validation ───────────────────
+# These checks require issue metadata. If unavailable (no issue ref,
+# or gh issue view failed), Phase 2 is skipped gracefully.
+
+ISSUE_TITLE="${ISSUE_TITLE:-}"
+ISSUE_BODY_TEXT="${ISSUE_BODY_TEXT:-}"
+PHASE2_ACTIVE=false
+
+if [ -n "$ISSUE_NUM" ] && { [ -n "$ISSUE_TITLE" ] || [ -n "$ISSUE_BODY_TEXT" ]; }; then
+  PHASE2_ACTIVE=true
+fi
+
+# ── Check 4: Issue Scope Detection ───────────────────────
+# Detect multi-concern issues by structural signals in the issue body.
+# Issues with too many pillars/phases should be split before PR review.
+
+if [ "$PHASE2_ACTIVE" = true ] && [ -n "$ISSUE_BODY_TEXT" ]; then
+  # Count headings matching pillar/phase/part/section/step patterns
+  PILLARS=$(echo "$ISSUE_BODY_TEXT" | grep -ciE "^#{1,3} .*(pillar|phase|part|section|step) [0-9]" || true)
+  PILLARS="${PILLARS:-0}"
+
+  # Count acceptance criteria checkboxes
+  AC_COUNT=$(echo "$ISSUE_BODY_TEXT" | grep -c "^- \[ \]" || true)
+  AC_COUNT="${AC_COUNT:-0}"
+
+  # Count ## section headers
+  IMPL_SECTIONS=$(echo "$ISSUE_BODY_TEXT" | grep -cE "^## " || true)
+  IMPL_SECTIONS="${IMPL_SECTIONS:-0}"
+
+  if [ "$PILLARS" -ge 3 ]; then
+    block "Issue #${ISSUE_NUM} describes ${PILLARS} pillars/phases — split into ${PILLARS} separate issues first."
+  fi
+
+  if [ "$AC_COUNT" -gt 15 ] && [ "$IMPL_SECTIONS" -gt 5 ]; then
+    warn "Issue #${ISSUE_NUM} has ${AC_COUNT} acceptance criteria across ${IMPL_SECTIONS} sections — likely too broad for one PR."
+  fi
+fi
+
+# ── Check 5: Workstream vs Issue Alignment ────────────────
+# Compare what the PR touches against what the issue describes.
+# Flag file categories that aren't mentioned in the issue.
+
+if [ "$PHASE2_ACTIVE" = true ]; then
+  ISSUE_TEXT="${ISSUE_BODY_TEXT} ${ISSUE_TITLE}"
+
+  # Helper: count mentions of keywords in issue text (case-insensitive)
+  # Uses || true to prevent grep exit-code 1 from triggering set -e,
+  # and captures in a variable to avoid double-output from || echo 0.
+  count_mentions() {
+    local n
+    n=$(echo "$ISSUE_TEXT" | grep -ciE "$1" || true)
+    echo "${n:-0}"
+  }
+
+  # Helper: count files matching a pattern in CHANGED_FILES
+  count_touched() {
+    if [ -n "${CHANGED_FILES:-}" ]; then
+      local n
+      n=$(echo "$CHANGED_FILES" | grep -c "$1" || true)
+      echo "${n:-0}"
+    else
+      echo 0
+    fi
+  }
+
+  # Workflows: PR touches .github/workflows/ but issue doesn't mention CI
+  TOUCHES_WORKFLOWS=$(count_touched '\.github/workflows/')
+  MENTIONS_WORKFLOWS=$(count_mentions 'workflow|ci/cd|github.actions|\.yml')
+  if [ "$TOUCHES_WORKFLOWS" -gt 0 ] && [ "$MENTIONS_WORKFLOWS" -eq 0 ]; then
+    warn "PR modifies ${TOUCHES_WORKFLOWS} workflow file(s) but issue #${ISSUE_NUM} doesn't mention CI/workflows. Are these changes in scope?"
+  fi
+
+  # Docs: PR touches docs/ but issue doesn't mention documentation
+  TOUCHES_DOCS=$(count_touched '^docs/')
+  MENTIONS_DOCS=$(count_mentions 'doc(s|umentation)|readme|PR.Reviews|Architecture\.md|Contributing\.md|Testing\.md')
+  if [ "$TOUCHES_DOCS" -gt 0 ] && [ "$MENTIONS_DOCS" -eq 0 ]; then
+    warn "PR modifies ${TOUCHES_DOCS} doc file(s) but issue #${ISSUE_NUM} doesn't mention documentation. Are these changes in scope?"
+  fi
+
+  # PR template: PR touches .github/pull_request_template but issue doesn't mention templates
+  TOUCHES_TEMPLATE=$(count_touched '\.github/pull_request_template')
+  MENTIONS_TEMPLATE=$(count_mentions 'template|pr.template|pull.request.template')
+  if [ "$TOUCHES_TEMPLATE" -gt 0 ] && [ "$MENTIONS_TEMPLATE" -eq 0 ]; then
+    warn "PR modifies the PR template but issue #${ISSUE_NUM} doesn't mention templates. Are these changes in scope?"
+  fi
+
+  # Scripts: PR touches scripts/ but issue doesn't mention scripting/tooling
+  TOUCHES_SCRIPTS=$(count_touched '^scripts/')
+  MENTIONS_SCRIPTS=$(count_mentions 'script|tooling|automation|scope.gate')
+  if [ "$TOUCHES_SCRIPTS" -gt 0 ] && [ "$MENTIONS_SCRIPTS" -eq 0 ]; then
+    warn "PR modifies ${TOUCHES_SCRIPTS} script file(s) but issue #${ISSUE_NUM} doesn't mention scripts/tooling. Are these changes in scope?"
+  fi
+
+  # Test infra: PR touches test-utils crate but issue doesn't mention test infra
+  TOUCHES_TEST_INFRA=$(count_touched 'crates/pi-daemon-test-utils/')
+  MENTIONS_TEST_INFRA=$(count_mentions 'test.util|test.infra|test.helper|test-utils')
+  if [ "$TOUCHES_TEST_INFRA" -gt 0 ] && [ "$MENTIONS_TEST_INFRA" -eq 0 ]; then
+    warn "PR modifies ${TOUCHES_TEST_INFRA} test-utils file(s) but issue #${ISSUE_NUM} doesn't mention test infrastructure. Are these changes in scope?"
+  fi
+fi
+
 # ── Build Comment ─────────────────────────────────────────
 
 FILE_COUNT=0
@@ -153,6 +260,8 @@ build_workstream_table() {
 
 COMMENT_BODY=""
 
+GATE_VERSION="Scope Gate v2 · Phase 1+2: Mechanical checks + issue alignment · No LLM"
+
 case "$VERDICT" in
   block)
     COMMENT_BODY="## 🚫 Scope Gate: BLOCKED
@@ -169,7 +278,7 @@ $(build_workstream_table)
 **How to fix:** Split this PR so each addresses a single concern. Keep source code and its tests together (one workstream), but separate CI changes, docs, and infrastructure into their own PRs.
 
 ---
-*🔬 Scope Gate v1 · Phase 1: Mechanical checks · No LLM*"
+*🔬 ${GATE_VERSION}*"
     ;;
   warn)
     COMMENT_BODY="## ⚠️ Scope Gate: WARNING
@@ -185,7 +294,7 @@ $(build_workstream_table)
 Review quality drops with larger PRs. Consider whether any changes could be a separate PR.
 
 ---
-*🔬 Scope Gate v1 · Phase 1: Mechanical checks · No LLM*"
+*🔬 ${GATE_VERSION}*"
     ;;
   pass)
     # No comment on pass — no clutter

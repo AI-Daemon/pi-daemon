@@ -327,6 +327,359 @@ export DELETIONS=300
 export CHANGED_FILES="crates/pi-daemon-api/src/routes.rs"
 run_test "block overrides warn" "block"
 
+# ═══════════════════════════════════════════════════════════
+# Phase 2 Tests: Issue Alignment Validation
+# ═══════════════════════════════════════════════════════════
+
+echo ""
+echo "━━━ Phase 2: Issue Scope Detection (Check 4) ━━━"
+
+# ─── Test 25: 3+ pillars → block ─────────────────────────
+echo ""
+echo "25. Issue with 3 pillars → block"
+export PR_BODY="Closes #50"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES="crates/pi-daemon-api/src/routes.rs"
+export ISSUE_TITLE="Big refactor"
+export ISSUE_BODY_TEXT="## Overview
+
+### Pillar 1: Testing
+Fix tests.
+
+### Pillar 2: CI
+Fix CI.
+
+### Pillar 3: Docs
+Fix docs."
+run_test "3 pillars blocks" "block"
+
+# ─── Test 26: 5 phases → block ──────────────────────────
+echo ""
+echo "26. Issue with 5 phases → block"
+export PR_BODY="Closes #50"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES="crates/pi-daemon-api/src/routes.rs"
+export ISSUE_TITLE="Multi-phase rollout"
+export ISSUE_BODY_TEXT="# Rollout plan
+
+## Phase 1: prep
+Do prep.
+
+## Phase 2: build
+Build it.
+
+## Phase 3: test
+Test it.
+
+## Phase 4: deploy
+Deploy it.
+
+## Phase 5: monitor
+Monitor it."
+run_test "5 phases blocks" "block"
+
+# ─── Test 27: 2 pillars → pass (below threshold) ────────
+echo ""
+echo "27. Issue with 2 pillars → pass (below threshold)"
+export PR_BODY="Closes #50"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES="crates/pi-daemon-api/src/routes.rs"
+export ISSUE_TITLE="Small change"
+export ISSUE_BODY_TEXT="## Overview
+
+### Pillar 1: Testing
+Fix tests.
+
+### Pillar 2: CI
+Fix CI."
+run_test "2 pillars passes" "pass"
+
+# ─── Test 28: 16 ACs across 6 sections → warn ───────────
+echo ""
+echo "28. Issue with 16 ACs across 6 sections → warn"
+export PR_BODY="Closes #50"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES="crates/pi-daemon-api/src/routes.rs"
+export ISSUE_TITLE="Broad issue"
+export ISSUE_BODY_TEXT="## API Routes
+- [ ] AC 1
+- [ ] AC 2
+- [ ] AC 3
+
+## Error Handling
+- [ ] AC 4
+- [ ] AC 5
+- [ ] AC 6
+
+## Middleware
+- [ ] AC 7
+- [ ] AC 8
+- [ ] AC 9
+
+## WebSocket
+- [ ] AC 10
+- [ ] AC 11
+- [ ] AC 12
+
+## Authentication
+- [ ] AC 13
+- [ ] AC 14
+- [ ] AC 15
+
+## Logging
+- [ ] AC 16"
+run_test "16 ACs 6 sections warns" "warn"
+
+# ─── Test 29: 15 ACs across 5 sections → pass (boundary) ─
+echo ""
+echo "29. Issue with 15 ACs across 5 sections → pass (at boundary, not over)"
+export PR_BODY="Closes #50"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES="crates/pi-daemon-api/src/routes.rs"
+export ISSUE_TITLE="Focused issue"
+export ISSUE_BODY_TEXT="## API Routes
+- [ ] AC 1
+- [ ] AC 2
+- [ ] AC 3
+
+## Error Handling
+- [ ] AC 4
+- [ ] AC 5
+- [ ] AC 6
+
+## Middleware
+- [ ] AC 7
+- [ ] AC 8
+- [ ] AC 9
+
+## WebSocket
+- [ ] AC 10
+- [ ] AC 11
+- [ ] AC 12
+
+## Authentication
+- [ ] AC 13
+- [ ] AC 14
+- [ ] AC 15"
+run_test "15 ACs 5 sections passes" "pass"
+
+echo ""
+echo "━━━ Phase 2: Workstream vs Issue Alignment (Check 5) ━━━"
+
+# ─── Test 30: Workflow mismatch → warn ───────────────────
+echo ""
+echo "30. PR touches workflows but issue doesn't mention CI → warn"
+export PR_BODY="Closes #50"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES=".github/workflows/ci.yml
+crates/pi-daemon-api/src/routes.rs"
+export ISSUE_TITLE="Fix API routes"
+export ISSUE_BODY_TEXT="Fix the broken API routes in the daemon."
+run_test "workflow mismatch warns" "warn"
+
+# ─── Test 31: Workflow match → pass ──────────────────────
+echo ""
+echo "31. PR touches workflows and issue mentions CI → pass"
+export PR_BODY="Closes #50"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES=".github/workflows/ci.yml
+crates/pi-daemon-api/src/routes.rs"
+export ISSUE_TITLE="Fix CI workflow"
+export ISSUE_BODY_TEXT="The CI workflow is broken, fix it."
+run_test "workflow match passes" "pass"
+
+# ─── Test 32: Docs mismatch → warn ──────────────────────
+echo ""
+echo "32. PR touches docs but issue doesn't mention docs → warn"
+export PR_BODY="Closes #50"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES="docs/Architecture.md
+crates/pi-daemon-api/src/routes.rs"
+export ISSUE_TITLE="Fix API routes"
+export ISSUE_BODY_TEXT="Fix the broken API routes in the daemon."
+run_test "docs mismatch warns" "warn"
+
+# ─── Test 33: Docs match → pass ─────────────────────────
+echo ""
+echo "33. PR touches docs and issue mentions documentation → pass"
+export PR_BODY="Closes #50"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES="docs/Architecture.md
+crates/pi-daemon-api/src/routes.rs"
+export ISSUE_TITLE="Update docs and routes"
+export ISSUE_BODY_TEXT="Update the documentation for the new API routes."
+run_test "docs match passes" "pass"
+
+# ─── Test 34: Template mismatch → warn ──────────────────
+echo ""
+echo "34. PR touches PR template but issue doesn't mention templates → warn"
+export PR_BODY="Closes #50"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES=".github/pull_request_template.md
+crates/pi-daemon-api/src/routes.rs"
+export ISSUE_TITLE="Fix API routes"
+export ISSUE_BODY_TEXT="Fix the broken API routes."
+run_test "template mismatch warns" "warn"
+
+# ─── Test 35: Scripts mismatch → warn ───────────────────
+echo ""
+echo "35. PR touches scripts but issue doesn't mention scripts → warn"
+export PR_BODY="Closes #50"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES="scripts/deploy.sh
+crates/pi-daemon-api/src/routes.rs"
+export ISSUE_TITLE="Fix API routes"
+export ISSUE_BODY_TEXT="Fix the broken API routes."
+run_test "scripts mismatch warns" "warn"
+
+# ─── Test 36: Scripts match (mentions scope gate) → pass ─
+echo ""
+echo "36. PR touches scripts and issue mentions scope gate → pass"
+export PR_BODY="Closes #50"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES="scripts/scope-gate.sh
+scripts/test-scope-gate.sh"
+export ISSUE_TITLE="Scope Gate Phase 2"
+export ISSUE_BODY_TEXT="Extend the scope gate script with alignment checks."
+run_test "scripts match passes" "pass"
+
+# ─── Test 37: Test-infra mismatch → warn ────────────────
+echo ""
+echo "37. PR touches test-utils but issue doesn't mention test infra → warn"
+export PR_BODY="Closes #50"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES="crates/pi-daemon-test-utils/src/client.rs
+crates/pi-daemon-api/src/routes.rs"
+export ISSUE_TITLE="Fix API routes"
+export ISSUE_BODY_TEXT="Fix the broken API routes."
+run_test "test-infra mismatch warns" "warn"
+
+# ─── Test 38: No issue body → Phase 2 skipped ───────────
+echo ""
+echo "38. No issue body → Phase 2 checks skipped gracefully"
+export PR_BODY="Closes #50"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES=".github/workflows/ci.yml
+crates/pi-daemon-api/src/routes.rs"
+unset ISSUE_TITLE
+unset ISSUE_BODY_TEXT
+run_test "no issue body skips Phase 2" "pass"
+
+# ─── Test 39: Phase 1 block + Phase 2 block stack ───────
+echo ""
+echo "39. Phase 1 size block + Phase 2 pillar block stack"
+export PR_BODY="Closes #50"
+export ADDITIONS=1200
+export DELETIONS=400
+export CHANGED_FILES="crates/pi-daemon-api/src/routes.rs"
+export ISSUE_TITLE="Mega issue"
+export ISSUE_BODY_TEXT="## Phase 1: prep
+Do prep.
+## Phase 2: build
+Build it.
+## Phase 3: test
+Test it."
+run_test "Phase 1+2 blocks stack" "block"
+
+# ─── Test 40: Real-world PR #117 scenario ────────────────
+echo ""
+echo "40. Real-world: PR #117 with full issue body (multi-pillar + size)"
+export PR_BODY="Closes #116"
+export ADDITIONS=1877
+export DELETIONS=662
+export CHANGED_FILES="crates/pi-daemon-test-utils/src/server.rs
+crates/pi-daemon-test-utils/src/client.rs
+crates/pi-daemon-api/tests/api_integration.rs
+crates/pi-daemon-api/src/routes.rs
+.github/workflows/code-review.yml
+docs/Testing.md
+.github/pull_request_template.md
+scripts/test-local.sh"
+export ISSUE_TITLE="Testing suite revamp — enhanced tests, LLM prompt engineering, self-updating PR template"
+export ISSUE_BODY_TEXT="# Testing Suite Revamp
+
+## Pillar 1: Testing Suite Overhaul
+Rewrite all tests.
+- [ ] AC 1
+- [ ] AC 2
+
+## Pillar 2: LLM Review Prompt Engineering
+Rewrite prompts.
+- [ ] AC 3
+- [ ] AC 4
+
+## Pillar 3: Self-Updating PR Template
+Auto-update template.
+- [ ] AC 5
+- [ ] AC 6"
+run_test "PR #117 multi-block (size + pillars)" "block"
+
+# ─── Test 41: Step keyword detected as pillar ────────────
+echo ""
+echo "41. Issue with 3 steps → block"
+export PR_BODY="Closes #50"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES="crates/pi-daemon-api/src/routes.rs"
+export ISSUE_TITLE="Multi-step"
+export ISSUE_BODY_TEXT="## Step 1: prepare
+Prepare.
+
+## Step 2: execute
+Execute.
+
+## Step 3: verify
+Verify."
+run_test "3 steps blocks" "block"
+
+# ─── Test 42: Section keyword in heading ─────────────────
+echo ""
+echo "42. Issue with 4 sections → block"
+export PR_BODY="Closes #50"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES="crates/pi-daemon-api/src/routes.rs"
+export ISSUE_TITLE="Multi-section"
+export ISSUE_BODY_TEXT="## Section 1: Intro
+Intro.
+
+## Section 2: Body
+Body.
+
+## Section 3: Conclusion
+Conclusion.
+
+## Section 4: Appendix
+Appendix."
+run_test "4 sections blocks" "block"
+
+# ─── Test 43: Phase 2 warn doesn't escalate to block ────
+echo ""
+echo "43. Phase 2 alignment warn doesn't escalate to block"
+export PR_BODY="Closes #50"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES=".github/workflows/ci.yml
+docs/Testing.md
+.github/pull_request_template.md"
+export ISSUE_TITLE="Fix API routes"
+export ISSUE_BODY_TEXT="Fix the broken API routes."
+run_test "multiple alignment warns stay warn" "warn"
+
 # ─── Summary ─────────────────────────────────────────────
 echo ""
 echo "━━━ Results ━━━"

@@ -154,15 +154,24 @@ scope-gate ──→ classify ──→ lint-format ──┬──→ test ─�
 |-------|------|:--------:|:-------:|-------------|
 | **Scope Gate** | `scripts/scope-gate.sh` | ✅ | ✅ | Mechanical PR scope check. Pure bash, no LLM, <15 seconds. See `_scope-gate.yml`. |
 
-The Scope Gate evaluates whether a PR is focused enough to review reliably. It runs three checks:
+The Scope Gate evaluates whether a PR is focused enough to review reliably. It runs five checks across two phases:
+
+**Phase 1: Mechanical Checks**
 
 1. **Issue Reference (required):** Every PR must reference an issue (`Closes #N`, `Fixes #N`, `Refs #N`, or `Implements #N`). Missing = blocked.
 2. **Size Thresholds:** >1500 lines → blocked. >800 lines → warning.
 3. **Workstream Cohesion:** Files are categorized into workstreams (`source`, `test-code`, `test-infra`, `ci-workflows`, `docs`, `pr-template`, `scripts`, `other`). `deps` (Cargo.toml/Cargo.lock) and `changelog` are always expected and not counted. `source` + `test-code` always count as one workstream (tests belong with their source per Google eng-practices). 4+ workstreams → blocked. 3 workstreams at 500+ lines → warning.
 
+**Phase 2: Issue Alignment Validation (#120)**
+
+4. **Issue Scope Detection:** The referenced issue's body is scanned for structural signals of multi-concern issues. Headings matching `Pillar N`, `Phase N`, `Part N`, `Section N`, `Step N` patterns are counted. 3+ pillars/phases → blocked ("split the issue first"). Issues with >15 acceptance criteria (`- [ ]`) across >5 `## ` sections → warning (likely too broad).
+5. **Workstream vs Issue Alignment:** Compares the PR's changed file categories against keywords in the issue title/body. If the PR touches workflows, docs, templates, scripts, or test-utils but the issue doesn't mention the corresponding category, a warning is raised. This catches accidental scope creep — not blocks, just flags for reviewer attention.
+
+Phase 2 checks are skipped gracefully when issue metadata is unavailable (e.g., `gh issue view` fails or the issue has no body).
+
 On block/warn, a PR comment is posted with the workstream breakdown and guidance on how to split. On pass, no comment (no clutter). If a previously-blocked PR is fixed and now passes, the stale comment is deleted.
 
-**Architecture:** The logic lives in `scripts/scope-gate.sh` — a standalone bash script testable locally via `scripts/test-scope-gate.sh` (27 test cases). The workflow (`_scope-gate.yml`) is a thin reusable wrapper that gathers PR metadata and calls the script.
+**Architecture:** The logic lives in `scripts/scope-gate.sh` — a standalone bash script testable locally via `scripts/test-scope-gate.sh` (46 test cases: 27 Phase 1, 19 Phase 2). The workflow (`_scope-gate.yml`) is a thin reusable wrapper that gathers PR metadata (including issue title/body for Phase 2) and calls the script.
 
 ### 🔀 Change Classification (#133)
 
@@ -531,7 +540,7 @@ Must be fixed before merge. Common causes:
 | File | Purpose | Trigger |
 |------|---------|---------|
 | `pr-pipeline.yml` | Orchestrator — calls all reusable workflows | `pull_request` |
-| `_scope-gate.yml` | Scope gate (size, workstreams, issue ref) | `workflow_call` |
+| `_scope-gate.yml` | Scope gate (Phase 1: size, workstreams, issue ref; Phase 2: issue scope + alignment) | `workflow_call` |
 | `_lint-format.yml` | Clippy + rustfmt + doc compile | `workflow_call` |
 | `_test.yml` | Unit + integration tests + coverage | `workflow_call` |
 | `_security.yml` | Secrets, license, unsafe, audit | `workflow_call` |

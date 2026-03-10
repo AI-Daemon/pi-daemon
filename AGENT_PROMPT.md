@@ -144,6 +144,20 @@ cargo fmt --all                       # Always format
 
 **Do not accumulate errors.** Build after every file you create or modify. If something doesn't compile, fix it before moving on.
 
+### Step 4.5: Scope Check (Before Committing)
+
+Before pushing, verify your changes won't be blocked by the scope gate:
+
+```bash
+bash scripts/test-scope-gate.sh      # All tests must pass
+```
+
+The scope gate enforces:
+- **Phase 1:** Issue reference required, PR under 800 lines (warn) / 1500 lines (block), max 3 workstreams
+- **Phase 2:** Issue can't describe 3+ pillars/phases (block), PR file changes must match what the issue describes (warn if workflows/docs/scripts/templates are touched but the issue doesn't mention them)
+
+If the gate would block your PR, split the work before pushing. If it warns, evaluate whether the flagged files are truly in scope.
+
 ### Step 5: Commit and Push
 
 ```bash

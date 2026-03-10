@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Scope Gate Phase 2: issue alignment validation (#120)
+  - Check 4: Issue scope detection — blocks PRs when the referenced issue has 3+ pillars/phases/steps/sections; warns when 15+ acceptance criteria span 5+ sections
+  - Check 5: Workstream vs issue alignment — warns when PR touches file categories (workflows, docs, templates, scripts, test-utils) not mentioned in the issue
+  - Phase 2 checks skip gracefully when issue metadata is unavailable
+  - 19 new test cases (46 total); all 27 Phase 1 tests still pass
+  - Version stamp updated to `Scope Gate v2 · Phase 1+2`
+  - `AGENT_PROMPT.md` updated with Step 4.5: Scope Check guidance
 - Path-aware CI pipeline — skip irrelevant checks based on changed file types (#133)
 - `classify` job in `pr-pipeline.yml` — categorizes changed files into 7 boolean flags (`has_rust`, `has_ts`, `has_docs`, `has_deps`, `has_workflows`, `has_scripts`, `has_npm`) (#133)
 - All 7 reusable workflows accept optional boolean `workflow_call` inputs with `default: true` (fail-open) (#133)
