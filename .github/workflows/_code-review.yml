@@ -426,7 +426,6 @@ jobs:
 
             // Filter inline comments to only include lines that exist in the diff
             // This prevents "Line could not be resolved" errors (#172)
-            const fs = require('fs');
             let diffLines = {};
             
             try {
@@ -854,7 +853,6 @@ jobs:
 
             // Filter inline comments to only include lines that exist in the diff
             // This prevents "Line could not be resolved" errors (#172)
-            const fs = require('fs');
             let diffLines = {};
             
             try {
@@ -1391,7 +1389,6 @@ jobs:
 
             // Filter inline comments to only include lines that exist in the diff
             // This prevents "Line could not be resolved" errors (#172)
-            const fs = require('fs');
             let diffLines = {};
             
             try {
