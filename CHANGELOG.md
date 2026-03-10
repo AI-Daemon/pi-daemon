@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `PiManager` struct with discovery + auto-install orchestration, `PiStatus` type
 
 ### Fixed
+- Fix LLM inline comments failing with "Line could not be resolved" errors (#172)
+  - Filter inline comments to only reference lines that exist in the diff
+  - Move unmappable line references to "File-level feedback" section in review body  
+  - Prevents GitHub API 422 errors when LLM references unchanged lines
+  - Applies to architectural, test quality, and configuration reviews
 - Fix LLM code review comments not posted before job failure (#166)
   - Reordered workflow steps in `_code-review.yml` so PR review creation happens before job termination
   - Architectural, test quality, and configuration reviews now post detailed inline comments before failing
