@@ -1,21 +1,28 @@
 name: Security
 
-on:
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened]
+# Reusable security workflow — called by pr-pipeline.yml.
+# Consolidates all security checks: secrets scanning (from standalone
+# security.yml), cargo-audit, license compliance, unsafe code detection,
+# and npm dependency auditing.
+#
+# Phase 2 of CI Orchestrator (#126). Security runs in parallel with
+# lint-format after scope gate passes (enforced via needs: [scope-gate]
+# in the orchestrator).
 
-permissions:
-  contents: read
-  pull-requests: write
-  checks: write
+on:
+  workflow_call:
+
+# Concurrency is primarily managed by the orchestrator (pr-pipeline.yml),
+# but we include a group here for the config review check and as a safety net.
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   # ─── TruffleHog Secrets Scan ────────────────────────────
   secrets-scan:
     name: Secrets Scan
     runs-on: ubuntu-latest
-    if: github.actor != 'dependabot[bot]'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -84,7 +91,6 @@ jobs:
   credential-patterns:
     name: Credential Patterns
     runs-on: ubuntu-latest
-    if: github.actor != 'dependabot[bot]'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -96,7 +102,7 @@ jobs:
           PATTERNS='(sk-ant-[a-zA-Z0-9]{20,}|sk-proj-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{36}|gho_[a-zA-Z0-9]{36}|github_pat_[a-zA-Z0-9]{22}_[a-zA-Z0-9]{59}|glpat-[a-zA-Z0-9\-]{20,}|xoxb-[0-9]{10,}|xoxp-[0-9]{10,}|AKIA[0-9A-Z]{16})'
 
           # Only scan the diff, not the entire repo
-          DIFF=$(git diff origin/main...HEAD -- ':!*.lock' ':!.github/workflows/security.yml' 2>/dev/null || git diff HEAD~1 -- ':!*.lock' ':!.github/workflows/security.yml' 2>/dev/null || echo "")
+          DIFF=$(git diff origin/main...HEAD -- ':!*.lock' ':!.github/workflows/_security.yml' 2>/dev/null || git diff HEAD~1 -- ':!*.lock' ':!.github/workflows/_security.yml' 2>/dev/null || echo "")
 
           FOUND=$(echo "$DIFF" | grep -Pn "^\+" | grep -P "$PATTERNS" || true)
 
@@ -154,11 +160,61 @@ jobs:
 
             core.setFailed('Potential credential patterns found');
 
+  # ─── License & Supply Chain ─────────────────────────────
+  license-check:
+    name: License Compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          log-level: warn
+          command: check
+
+  # ─── Unsafe Code Detection ─────────────────────────────
+  unsafe-check:
+    name: Unsafe Code Detection
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check for new unsafe code
+        run: |
+          NEW_UNSAFE=$(git diff origin/main...HEAD -- '*.rs' | grep -n '^\+.*unsafe ' | grep -v '^\+.*//.*unsafe' || true)
+          
+          if [ -n "$NEW_UNSAFE" ]; then
+            echo "::error::New unsafe code detected. pi-daemon must be 100% safe Rust."
+            echo "If this is intentional, add a comment explaining why:"
+            echo "$NEW_UNSAFE"
+            exit 1
+          else
+            echo "✅ No unsafe code detected"
+          fi
+
+  # ─── Security Audit (cargo-audit) ──────────────────────
+  cargo-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run security audit
+        run: cargo audit
+        continue-on-error: true
+
+      - name: Check for known vulnerabilities
+        run: cargo audit --deny warnings || true
+
   # ─── npm/Yarn Dependency Security ───────────────────────
   npm-security:
     name: npm Security Audit
     runs-on: ubuntu-latest
-    if: github.actor != 'dependabot[bot]'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -167,7 +223,6 @@ jobs:
       - name: Check for npm/yarn projects
         id: detect
         run: |
-          # Find directories containing package.json or lock files
           PACKAGE_DIRS=$(find . -name 'package.json' -o -name 'package-lock.json' -o -name 'yarn.lock' -o -name 'pnpm-lock.yaml' | xargs -I {} dirname {} | sort -u | grep -v node_modules || true)
           
           if [ -n "$PACKAGE_DIRS" ]; then
@@ -198,7 +253,6 @@ jobs:
               echo "=== Auditing $dir ==="
               cd "$GITHUB_WORKSPACE/$dir"
               
-              # Detect package manager
               if [ -f "pnpm-lock.yaml" ]; then
                 echo "Using pnpm for $dir"
                 npx pnpm audit --audit-level moderate || STATUS=$?
@@ -207,14 +261,12 @@ jobs:
                 npx yarn audit --level moderate || STATUS=$?
               else
                 echo "Using npm for $dir"
-                # Install dependencies first if needed
                 if [ ! -d "node_modules" ] && [ -f "package.json" ]; then
                   npm ci --only=prod --ignore-scripts 2>/dev/null || npm install --only=prod --ignore-scripts 2>/dev/null || true
                 fi
                 npm audit --audit-level moderate || STATUS=$?
               fi
               
-              # Capture status for this directory
               if [ "${STATUS:-0}" -ne 0 ]; then
                 OVERALL_STATUS=1
                 AUDIT_RESULTS="${AUDIT_RESULTS}❌ $dir: vulnerabilities found\n"
@@ -226,7 +278,6 @@ jobs:
             fi
           done < /tmp/npm_dirs.txt
           
-          # Save results for reporting
           echo -e "$AUDIT_RESULTS" > /tmp/npm_audit_results.txt
           
           if [ "$OVERALL_STATUS" -ne 0 ]; then

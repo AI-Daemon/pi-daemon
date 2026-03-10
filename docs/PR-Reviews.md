@@ -17,20 +17,20 @@ Checks fall into two categories:
 
 | Check | Tool | Blocking | Comment | Description |
 |-------|------|:--------:|:-------:|-------------|
-| **Secrets Scan** | TruffleHog | ✅ | ✅ | Scans full diff for leaked API keys, tokens, passwords, private keys. AI agents are prone to committing secrets from context. |
-| **Hardcoded Credentials** | gitleaks / custom grep | ✅ | ✅ | Regex patterns for `sk-ant-`, `ghp_`, `Bearer `, `password = "`, etc. Catches unverified patterns TruffleHog might miss. |
-| **Commit Message Secrets** | Custom script | ✅ | ✅ | Scans all PR commit messages for secret patterns and env dumps. AI agents are prone to dumping `env` output into commit messages. See `commit-msg-scan.yml`. |
+| **Secrets Scan** | TruffleHog | ✅ | ✅ | Scans full diff for leaked API keys, tokens, passwords, private keys. Runs via `_security.yml`. |
+| **Hardcoded Credentials** | gitleaks / custom grep | ✅ | ✅ | Regex patterns for `sk-ant-`, `ghp_`, `Bearer `, `password = "`, etc. Runs via `_security.yml`. |
+| **Commit Message Secrets** | Custom script | ✅ | ✅ | Scans all PR commit messages for secret patterns and env dumps. See `commit-msg-scan.yml`. |
 | **SSRF / Private IP** | Custom grep | ⚠️ | ❌ | Scans for hardcoded private IPs, cloud metadata URLs, or localhost in non-test code. Advisory only — some localhost refs are intentional. |
 
 ### 📦 Supply Chain & Dependencies
 
 | Check | Tool | Blocking | Comment | Description |
 |-------|------|:--------:|:-------:|-------------|
-| **License Compliance** | cargo-deny | ✅ | ✅ | Ensures all deps use approved licenses (MIT, Apache-2.0, BSD, ISC, Zlib, Unicode-3.0). Blocks copyleft (GPL). Config: `deny.toml`. |
+| **License Compliance** | cargo-deny | ✅ | ✅ | Ensures all deps use approved licenses (MIT, Apache-2.0, BSD, ISC, Zlib, Unicode-3.0). Blocks copyleft (GPL). Config: `deny.toml`. Runs via `_security.yml`. |
 | **Unused Dependencies** | cargo-machete | ⚠️ | ✅ | Detects deps in Cargo.toml that are never used in code. Warning only — false positives with proc macros. |
 | **Outdated Dependencies** | cargo outdated / Dependabot | ❌ | ❌ | Reports deps with newer versions. Advisory only. |
-| **Security Audit** | cargo-audit | ✅ | ❌ | Checks deps against RustSec advisory database. Standard output in logs. |
-| **npm Security Audit** | npm audit / yarn audit | ✅ | ✅ | Checks JavaScript/TypeScript dependencies for known vulnerabilities. Supports npm, Yarn, and pnpm projects. Auto-detects package managers. |
+| **Security Audit** | cargo-audit | ✅ | ❌ | Checks deps against RustSec advisory database. Runs via `_security.yml`. |
+| **npm Security Audit** | npm audit / yarn audit | ✅ | ✅ | Checks JavaScript/TypeScript dependencies for known vulnerabilities. Runs via `_security.yml`. |
 
 ### 🔍 Code Quality & Correctness
 
@@ -38,7 +38,7 @@ Checks fall into two categories:
 |-------|------|:--------:|:-------:|-------------|
 | **Clippy** | cargo clippy | ✅ | ❌ | Zero warnings policy (`-D warnings`). Standard output in logs. |
 | **Rustfmt** | cargo fmt | ✅ | ❌ | Formatting check. Self-explanatory — run `cargo fmt`. |
-| **Unsafe Code Detection** | grep / cargo geiger | ✅ | ✅ | pi-daemon should be 100% safe Rust. Any new `unsafe` requires justification. |
+| **Unsafe Code Detection** | grep / cargo geiger | ✅ | ✅ | pi-daemon should be 100% safe Rust. Any new `unsafe` requires justification. Runs via `_security.yml`. |
 | **TODO/FIXME Tracker** | Custom grep | ⚠️ | ✅ | New TODOs must reference a GitHub issue (`TODO(#42): ...`). Lists orphaned TODOs. |
 | **Dead Code / Unused Imports** | cargo clippy | ✅ | ❌ | Caught by clippy's `dead_code` and `unused_imports` lints. |
 | **Complexity Analysis** | Custom / rust-code-analysis | ⚠️ | ❌ | Flags functions >100 lines or cyclomatic complexity >15. Advisory. |
@@ -127,16 +127,20 @@ When both structural and semantic checks run, a single PR comment is posted:
 
 | Check | Tool | Blocking | Comment | Description |
 |-------|------|:--------:|:-------:|-------------|
-| **PR Pipeline** | `pr-pipeline.yml` | ✅ | ❌ | Orchestrator that calls reusable workflows in dependency order. Scope gate runs first; lint depends on it via `needs:`. |
+| **PR Pipeline** | `pr-pipeline.yml` | ✅ | ❌ | Orchestrator that calls reusable workflows in dependency order. Scope gate runs first; lint, test, and security depend on it via `needs:`. |
 
 The PR Pipeline (`pr-pipeline.yml`) is the orchestrator for PR checks. It calls reusable workflows using `uses: ./.github/workflows/_*.yml` and enforces ordering via `needs:`. If the scope gate blocks, all downstream jobs are automatically skipped.
 
-**Current pipeline (Phase 1):**
+**Current pipeline (Phase 2):**
 ```
-scope-gate → lint-format (clippy + fmt + docs compile)
+scope-gate
+    │
+    ├─→ lint-format ─→ test (unit + integration + coverage)
+    │
+    └─→ security (parallel with lint — secrets, audit, license, unsafe, npm)
 ```
 
-Future phases (#126, #127, #128) will add test, security, build, code-review, and sandbox stages.
+Future phases (#127, #128) will add build, code-review, sandbox, and hygiene stages.
 
 ### 🔬 Scope Gate
 
@@ -164,6 +168,29 @@ On block/warn, a PR comment is posted with the workstream breakdown and guidance
 
 Lint and format checks run as a reusable workflow (`_lint-format.yml`) called by the PR Pipeline orchestrator. They only run after the scope gate passes.
 
+### 🧪 Tests
+
+| Check | Tool | Blocking | Comment | Description |
+|-------|------|:--------:|:-------:|-------------|
+| **Unit Tests** | cargo test (per-crate matrix) | ✅ | ❌ | Parallel per-crate. Runs via `_test.yml`. |
+| **Integration Tests** | cargo test --test '*' | ✅ | ❌ | Cross-module tests. Runs via `_test.yml`. |
+| **Coverage** | cargo-llvm-cov | ❌ | ✅ | Posts coverage breakdown as PR comment. Needs unit tests. Runs via `_test.yml`. |
+
+Test jobs run as a reusable workflow (`_test.yml`) called by the PR Pipeline orchestrator. Tests only run after lint passes (`needs: [lint-format]` in orchestrator). Coverage depends on unit tests internally (`needs: [test-unit]`).
+
+### 🔐 Security
+
+| Check | Tool | Blocking | Comment | Description |
+|-------|------|:--------:|:-------:|-------------|
+| **Secrets Scan** | TruffleHog | ✅ | ✅ | Scans for leaked API keys, tokens, passwords. |
+| **Credential Patterns** | Custom grep | ✅ | ✅ | Regex patterns for `sk-ant-`, `ghp_`, etc. |
+| **License Compliance** | cargo-deny | ✅ | ✅ | Approved licenses only. Config: `deny.toml`. |
+| **Unsafe Code** | grep | ✅ | ✅ | pi-daemon must be 100% safe Rust. |
+| **Security Audit** | cargo-audit | ✅ | ❌ | Checks deps against RustSec advisory DB. |
+| **npm Audit** | npm/yarn audit | ✅ | ✅ | JS/TS dependency vulnerabilities. |
+
+Security checks run as a reusable workflow (`_security.yml`) called by the PR Pipeline orchestrator. Security runs in parallel with lint after scope gate passes (`needs: [scope-gate]` in orchestrator).
+
 ### 🧹 PR Hygiene
 
 | Check | Tool | Blocking | Comment | Description |
@@ -175,12 +202,12 @@ Lint and format checks run as a reusable workflow (`_lint-format.yml`) called by
 
 | Check | Tool | Blocking | Comment | Description |
 |-------|------|:--------:|:-------:|-------------|
-| **Unit Tests** | cargo test (per-crate matrix) | ✅ | ❌ | Parallel per-crate. Standard test output in logs. |
-| **Integration Tests** | cargo test --test '*' | ✅ | ❌ | Cross-module tests. Runs after lint passes. |
+| **Unit Tests** | cargo test (per-crate matrix) | ✅ | ❌ | Parallel per-crate. Runs via `_test.yml`. |
+| **Integration Tests** | cargo test --test '*' | ✅ | ❌ | Cross-module tests. Runs via `_test.yml` after lint passes. |
 | **E2E Tests** | tests/e2e/ | ✅ | ❌ | Full daemon boot, HTTP/WebSocket flows. |
 | **Sandbox Integration** | Real binary lifecycle testing | ✅ | ❌ | Builds release binary, runs as actual daemon process, tests concurrency, memory, crash recovery, graceful shutdown. Only runs when core code changes. |
 | **Pi Bridge Extension** | TypeScript compilation check | ✅ | ❌ | Compiles the TypeScript bridge extension that connects pi TUI instances to pi-daemon. Type-check only. |
-| **Coverage** | cargo-llvm-cov | ❌ | ✅ | Posts per-crate coverage breakdown as PR comment. Advisory only. |
+| **Coverage** | cargo-llvm-cov | ❌ | ✅ | Posts per-crate coverage breakdown as PR comment. Advisory only. Runs via `_test.yml`. |
 | **Release Build** | cargo build --release | ✅ | ❌ | Must compile for Linux x86_64 and macOS ARM64. |
 | **MSRV** | cargo check on Rust 1.75 | ✅ | ❌ | Minimum Supported Rust Version. |
 

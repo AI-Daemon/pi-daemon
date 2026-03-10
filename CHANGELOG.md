@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- CI Orchestrator Phase 2 — tests + security as reusable workflows under the orchestrator (#126)
+- `_test.yml` — reusable test workflow: unit tests (per-crate matrix), integration tests, coverage (#126)
+- `_security.yml` — reusable security workflow: secrets scan, credential patterns, cargo-audit, license compliance, unsafe code detection, npm audit (#126)
+- Tests depend on lint-format via `needs:` in orchestrator — lint failure skips tests (#126)
+- Security runs parallel with lint after scope gate — `needs: [scope-gate]` (#126)
 - CI Orchestrator Phase 1 — `pr-pipeline.yml` orchestrates reusable workflows with `needs:` ordering (#125)
 - `_scope-gate.yml` — reusable scope gate workflow (`on: workflow_call`) with `pr_number`/`pr_body` inputs (#125)
 - `_lint-format.yml` — reusable lint/format workflow: Clippy, Rustfmt, docs compile (#125)
@@ -22,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PR size check removed from `pr-hygiene.yml` and consolidated into scope gate (#119)
 
 ### Removed
+- `security.yml` standalone workflow — replaced by `_security.yml` reusable workflow (#126)
+- `test-unit`, `test-integration`, `coverage` jobs removed from `ci.yml` — now run via `_test.yml` (#126)
+- `security`, `license-check`, `unsafe-check` jobs removed from `ci.yml` — now run via `_security.yml` (#126)
+- `"Security"` removed from `auto-approve.yml` watched workflows (now part of "PR Pipeline") (#126)
 - `scope-gate.yml` standalone workflow — replaced by `_scope-gate.yml` reusable workflow (#125)
 - `lint` job removed from `ci.yml` — now runs via `_lint-format.yml` (#125)
 

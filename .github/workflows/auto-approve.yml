@@ -24,7 +24,6 @@ on:
   workflow_run:
     workflows:
       - "CI"
-      - "Security"
       - "Commit Message Secret Scan"
       - "PR Hygiene"
       - "Documentation"

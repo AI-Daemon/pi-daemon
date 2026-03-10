@@ -5,7 +5,9 @@ name: PR Pipeline
 # transitively). If scope gate blocks, downstream jobs are skipped.
 #
 # Phase 1: scope-gate → lint-format
-# Phase 2+: will add test, security, build, code-review, sandbox, hygiene
+# Phase 2: scope-gate → lint-format → test
+#           scope-gate → security (parallel with lint)
+# Phase 3+: will add build, code-review, sandbox, hygiene
 
 on:
   pull_request:
@@ -38,4 +40,20 @@ jobs:
     uses: ./.github/workflows/_lint-format.yml
     permissions:
       contents: read
+    secrets: inherit
+
+  test:
+    needs: [lint-format]
+    uses: ./.github/workflows/_test.yml
+    permissions:
+      contents: read
+      pull-requests: write
+    secrets: inherit
+
+  security:
+    needs: [scope-gate]
+    uses: ./.github/workflows/_security.yml
+    permissions:
+      contents: read
+      pull-requests: write
     secrets: inherit
