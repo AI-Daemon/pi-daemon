@@ -44,7 +44,8 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    secrets: inherit
+    secrets:
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
   # ─── Change Classification ────────────────────────────────
   # Lightweight job (~5s) that categorizes changed files into boolean

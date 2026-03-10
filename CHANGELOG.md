@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Scope Gate Phase 3: LLM-assisted split suggestions (#121)
+  - When the mechanical gate BLOCKs a PR, calls Gemini 2.5 Flash via OpenRouter to suggest how to split it
+  - LLM receives file list + categories + issue body only (no diffs — tiny context, ~$0.01 per blocked PR)
+  - Split suggestion appended to the existing BLOCK comment with proposed issue titles and merge order
+  - Only fires on BLOCK verdicts — PASS and WARN never trigger an LLM call ($0.00 cost)
+  - Graceful degradation: missing API key, API errors, or unparseable responses fall back to Phase 1+2 comment
+  - `_scope-gate.yml` accepts `OPENROUTER_API_KEY` as optional secret (same pattern as `_code-review.yml`)
+  - `pr-pipeline.yml` passes `OPENROUTER_API_KEY` to scope gate
+  - 8 new test cases (54 total); all 46 Phase 1+2 tests still pass
+  - Version stamp updated to `Scope Gate v3 · Phase 1+2+3`
 - Scope Gate Phase 2: issue alignment validation (#120)
   - Check 4: Issue scope detection — blocks PRs when the referenced issue has 3+ pillars/phases/steps/sections; warns when 15+ acceptance criteria span 5+ sections
   - Check 5: Workstream vs issue alignment — warns when PR touches file categories (workflows, docs, templates, scripts, test-utils) not mentioned in the issue

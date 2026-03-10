@@ -11,6 +11,10 @@ on:
         description: "PR body text"
         required: true
         type: string
+    secrets:
+      OPENROUTER_API_KEY:
+        description: "OpenRouter API key for Phase 3 LLM split suggestions (optional)"
+        required: false
     outputs:
       verdict:
         description: "Scope gate verdict: pass, warn, or block"
@@ -65,6 +69,7 @@ jobs:
           PR_BODY: ${{ inputs.pr_body }}
           ADDITIONS: ${{ env.additions }}
           DELETIONS: ${{ env.deletions }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           CHANGED_FILES=$(cat /tmp/changed_files.txt)
           export CHANGED_FILES

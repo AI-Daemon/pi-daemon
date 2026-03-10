@@ -680,6 +680,143 @@ export ISSUE_TITLE="Fix API routes"
 export ISSUE_BODY_TEXT="Fix the broken API routes."
 run_test "multiple alignment warns stay warn" "warn"
 
+# ═══════════════════════════════════════════════════════════
+# Phase 3 Tests: LLM-Assisted Split Suggestions
+# ═══════════════════════════════════════════════════════════
+
+echo ""
+echo "━━━ Phase 3: LLM Split Suggestions ━━━"
+
+# Helper: run the gate and check if output contains/excludes a pattern
+run_test_content() {
+  local name="$1"
+  local expected_verdict="$2"
+  local should_contain="$3"   # "contains:<pattern>" or "excludes:<pattern>"
+  TOTAL=$((TOTAL + 1))
+
+  local output verdict exit_code
+  set +e
+  output=$(bash "$GATE" 2>&1)
+  exit_code=$?
+  set -e
+
+  verdict=$(echo "$output" | grep '^Verdict:' | awk '{print $2}')
+
+  local content_ok=true
+  local content_mode content_pattern
+  content_mode="${should_contain%%:*}"
+  content_pattern="${should_contain#*:}"
+
+  if [ "$content_mode" = "contains" ]; then
+    if ! echo "$output" | grep -qF "$content_pattern"; then
+      content_ok=false
+    fi
+  elif [ "$content_mode" = "excludes" ]; then
+    if echo "$output" | grep -qF "$content_pattern"; then
+      content_ok=false
+    fi
+  fi
+
+  if [ "$verdict" = "$expected_verdict" ] && [ "$content_ok" = true ]; then
+    echo "  ✅ ${name} → ${verdict} (${content_mode} '${content_pattern}' ✓)"
+    PASS=$((PASS + 1))
+  else
+    echo "  ❌ ${name} → expected '${expected_verdict}' (${content_mode} '${content_pattern}'), got '${verdict}' content_ok=${content_ok}"
+    echo "     Output: $(echo "$output" | head -5)"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+# ─── Test 44: BLOCK without API key → no LLM suggestion ──
+echo ""
+echo "44. BLOCK verdict without OPENROUTER_API_KEY → no split suggestion"
+export PR_BODY="Closes #50"
+export ADDITIONS=1200
+export DELETIONS=400
+export CHANGED_FILES="crates/pi-daemon-api/src/routes.rs
+crates/pi-daemon-api/src/server.rs"
+unset OPENROUTER_API_KEY 2>/dev/null || true
+unset ISSUE_TITLE 2>/dev/null || true
+unset ISSUE_BODY_TEXT 2>/dev/null || true
+run_test_content "block without API key skips LLM" "block" "excludes:Suggested Split"
+
+# ─── Test 45: PASS verdict never triggers LLM ────────────
+echo ""
+echo "45. PASS verdict → no split suggestion regardless of API key"
+export PR_BODY="Closes #42"
+export ADDITIONS=100
+export DELETIONS=50
+export CHANGED_FILES="crates/pi-daemon-api/src/routes.rs"
+export OPENROUTER_API_KEY="fake-key-for-testing"
+run_test_content "pass never triggers LLM" "pass" "excludes:Suggested Split"
+
+# ─── Test 46: WARN verdict never triggers LLM ────────────
+echo ""
+echo "46. WARN verdict → no split suggestion"
+export PR_BODY="Closes #99"
+export ADDITIONS=600
+export DELETIONS=300
+export CHANGED_FILES="crates/pi-daemon-api/src/routes.rs"
+export OPENROUTER_API_KEY="fake-key-for-testing"
+run_test_content "warn never triggers LLM" "warn" "excludes:Suggested Split"
+
+# ─── Test 47: Version stamp updated to v3 ────────────────
+echo ""
+echo "47. Version stamp is v3 Phase 1+2+3"
+export PR_BODY="Closes #99"
+export ADDITIONS=600
+export DELETIONS=300
+export CHANGED_FILES="crates/pi-daemon-api/src/routes.rs"
+unset OPENROUTER_API_KEY 2>/dev/null || true
+run_test_content "version stamp v3" "warn" "contains:Scope Gate v3"
+
+# ─── Test 48: BLOCK comment contains version stamp v3 ────
+echo ""
+echo "48. BLOCK comment also has version stamp v3"
+export PR_BODY="Closes #50"
+export ADDITIONS=1200
+export DELETIONS=400
+export CHANGED_FILES="crates/pi-daemon-api/src/routes.rs"
+unset OPENROUTER_API_KEY 2>/dev/null || true
+run_test_content "block version stamp v3" "block" "contains:Scope Gate v3"
+
+# ─── Test 49: BLOCK with empty API key → graceful skip ───
+echo ""
+echo "49. BLOCK with empty OPENROUTER_API_KEY → graceful skip"
+export PR_BODY="Closes #50"
+export ADDITIONS=1200
+export DELETIONS=400
+export CHANGED_FILES="crates/pi-daemon-api/src/routes.rs"
+export OPENROUTER_API_KEY=""
+run_test_content "empty API key skips LLM" "block" "excludes:Suggested Split"
+
+# ─── Test 50: BLOCK with invalid API key → graceful skip ─
+echo ""
+echo "50. BLOCK with invalid API key → degrades gracefully (no crash)"
+export PR_BODY="Closes #50"
+export ADDITIONS=1200
+export DELETIONS=400
+export CHANGED_FILES="crates/pi-daemon-api/src/routes.rs
+.github/workflows/ci.yml
+docs/Architecture.md
+.github/pull_request_template.md"
+export OPENROUTER_API_KEY="invalid-key-will-get-401"
+export ISSUE_TITLE="Big refactor project"
+export ISSUE_BODY_TEXT="Refactor all the things."
+# This will make a real HTTP call that returns an error — the gate
+# should degrade gracefully and still produce a BLOCK verdict
+run_test_content "invalid API key degrades gracefully" "block" "excludes:Suggested Split"
+
+# ─── Test 51: Phase 3 log message on skip ────────────────
+echo ""
+echo "51. Phase 3 logs skip reason when API key missing"
+export PR_BODY="Closes #50"
+export ADDITIONS=1200
+export DELETIONS=400
+export CHANGED_FILES="crates/pi-daemon-api/src/routes.rs"
+unset OPENROUTER_API_KEY 2>/dev/null || true
+run_test_content "logs skip reason" "block" "contains:OPENROUTER_API_KEY not set"
+
 # ─── Summary ─────────────────────────────────────────────
 echo ""
 echo "━━━ Results ━━━"

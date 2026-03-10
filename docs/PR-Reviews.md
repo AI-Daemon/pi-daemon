@@ -154,7 +154,7 @@ scope-gate ──→ classify ──→ lint-format ──┬──→ test ─�
 |-------|------|:--------:|:-------:|-------------|
 | **Scope Gate** | `scripts/scope-gate.sh` | ✅ | ✅ | Mechanical PR scope check. Pure bash, no LLM, <15 seconds. See `_scope-gate.yml`. |
 
-The Scope Gate evaluates whether a PR is focused enough to review reliably. It runs five checks across two phases:
+The Scope Gate evaluates whether a PR is focused enough to review reliably. It runs six checks across three phases:
 
 **Phase 1: Mechanical Checks**
 
@@ -169,9 +169,13 @@ The Scope Gate evaluates whether a PR is focused enough to review reliably. It r
 
 Phase 2 checks are skipped gracefully when issue metadata is unavailable (e.g., `gh issue view` fails or the issue has no body).
 
+**Phase 3: LLM-Assisted Split Suggestions (#121)**
+
+6. **Smart Split Suggestions:** When the mechanical gate BLOCKs a PR, an LLM (Gemini 2.5 Flash via OpenRouter) is called with the file list, workstream categories, and issue body (no diffs — tiny context) to suggest how to split the PR into focused, reviewable pieces. Each suggestion includes a proposed issue title, file grouping, and merge order. The suggestion is appended to the existing BLOCK comment. Cost: $0.00 for clean PRs, ~$0.01 for blocked PRs. Degrades gracefully if `OPENROUTER_API_KEY` is missing or the LLM call fails — the BLOCK verdict is unchanged, only the split suggestion is omitted.
+
 On block/warn, a PR comment is posted with the workstream breakdown and guidance on how to split. On pass, no comment (no clutter). If a previously-blocked PR is fixed and now passes, the stale comment is deleted.
 
-**Architecture:** The logic lives in `scripts/scope-gate.sh` — a standalone bash script testable locally via `scripts/test-scope-gate.sh` (46 test cases: 27 Phase 1, 19 Phase 2). The workflow (`_scope-gate.yml`) is a thin reusable wrapper that gathers PR metadata (including issue title/body for Phase 2) and calls the script.
+**Architecture:** The logic lives in `scripts/scope-gate.sh` — a standalone bash script testable locally via `scripts/test-scope-gate.sh` (54 test cases: 27 Phase 1, 19 Phase 2, 8 Phase 3). The workflow (`_scope-gate.yml`) is a thin reusable wrapper that gathers PR metadata (including issue title/body for Phase 2 and `OPENROUTER_API_KEY` for Phase 3) and calls the script.
 
 ### 🔀 Change Classification (#133)
 
@@ -540,7 +544,7 @@ Must be fixed before merge. Common causes:
 | File | Purpose | Trigger |
 |------|---------|---------|
 | `pr-pipeline.yml` | Orchestrator — calls all reusable workflows | `pull_request` |
-| `_scope-gate.yml` | Scope gate (Phase 1: size, workstreams, issue ref; Phase 2: issue scope + alignment) | `workflow_call` |
+| `_scope-gate.yml` | Scope gate (Phase 1: size, workstreams, issue ref; Phase 2: issue scope + alignment; Phase 3: LLM split suggestions) | `workflow_call` |
 | `_lint-format.yml` | Clippy + rustfmt + doc compile | `workflow_call` |
 | `_test.yml` | Unit + integration tests + coverage | `workflow_call` |
 | `_security.yml` | Secrets, license, unsafe, audit | `workflow_call` |

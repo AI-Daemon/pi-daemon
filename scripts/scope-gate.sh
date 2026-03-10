@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scope-gate.sh — Mechanical PR scope gate (Phase 1 + Phase 2)
+# scope-gate.sh — Mechanical PR scope gate (Phase 1 + Phase 2 + Phase 3)
 #
 # Evaluates whether a PR is focused enough to review by checking:
 #   Phase 1:
@@ -9,6 +9,8 @@
 #   Phase 2:
 #     4. Issue scope detection (multi-concern issues)
 #     5. Workstream vs issue alignment (PR changes match issue?)
+#   Phase 3:
+#     6. LLM-assisted split suggestions (only on BLOCK verdicts)
 #
 # Inputs (env vars):
 #   PR_BODY        — full PR description text
@@ -17,6 +19,7 @@
 #   CHANGED_FILES  — newline-separated list of changed file paths
 #   ISSUE_TITLE    — (Phase 2) issue title from gh issue view (optional)
 #   ISSUE_BODY_TEXT — (Phase 2) issue body from gh issue view (optional)
+#   OPENROUTER_API_KEY — (Phase 3) API key for LLM split suggestions (optional)
 #
 # Outputs (env vars, written to $GITHUB_OUTPUT if set):
 #   VERDICT       — "pass" | "warn" | "block"
@@ -233,12 +236,129 @@ if [ "$PHASE2_ACTIVE" = true ]; then
   fi
 fi
 
-# ── Build Comment ─────────────────────────────────────────
+# ── Compute file count (used by Phase 3 + comment builder) ─
 
 FILE_COUNT=0
 if [ -n "${CHANGED_FILES:-}" ]; then
   FILE_COUNT=$(echo "$CHANGED_FILES" | grep -c '.' || true)
 fi
+
+# ── Phase 3: LLM-Assisted Split Suggestions ──────────────
+# When the mechanical gate BLOCKs, ask an LLM how to split the PR.
+# Only fires on BLOCK verdicts — cost is $0.00 for clean PRs.
+# Requires OPENROUTER_API_KEY env var. Degrades gracefully if missing/failing.
+
+LLM_SUGGESTION=""
+
+if [ "$VERDICT" = "block" ] && [ -n "${OPENROUTER_API_KEY:-}" ]; then
+  # Build the workstream summary for the LLM (file list + categories, no diffs)
+  LLM_FILE_SUMMARY=""
+  if [ -n "${WORKSTREAM_FILES:-}" ]; then
+    # Group files by category with counts
+    local_sorted_keys=()
+    IFS=$'\n' local_sorted_keys=($(for k in "${!WORKSTREAMS[@]}"; do echo "$k"; done | sort)); unset IFS
+    for ws in "${local_sorted_keys[@]}"; do
+      ws_files=$(echo -e "$WORKSTREAM_FILES" | grep "^${ws}|" | sed "s/^${ws}|/  - /" || true)
+      LLM_FILE_SUMMARY="${LLM_FILE_SUMMARY}${ws} (${WORKSTREAMS[$ws]} files):\n${ws_files}\n"
+    done
+  fi
+
+  # Build the LLM prompt — tight, structured, asks for JSON
+  LLM_SYSTEM="You are a senior engineer helping split an oversized pull request into focused, reviewable PRs.
+
+Rules:
+- Group related files together (source + its tests = one PR per Google eng-practices)
+- Each suggested PR should be under 800 lines and touch 1-2 workstreams max
+- Suggest a concrete issue title for each split PR
+- If PRs have dependencies, suggest merge order
+- Keep it brief — the developer knows their codebase
+
+Output valid JSON only, no markdown fences:
+{\"splits\":[{\"title\":\"string\",\"files\":[\"path\"],\"workstreams\":[\"string\"],\"estimated_lines\":N,\"rationale\":\"one sentence\"}],\"merge_order\":\"string or null\"}"
+
+  LLM_USER="This PR was blocked by the scope gate. Help split it.
+
+Total: ${TOTAL} lines (+${ADDITIONS}/-${DELETIONS}), ${FILE_COUNT} files, ${MEANINGFUL_COUNT} workstreams.
+
+Issue: ${ISSUE_TITLE:-unknown}
+$([ -n "${ISSUE_BODY_TEXT:-}" ] && echo "Issue body (first 2000 chars):" && echo "${ISSUE_BODY_TEXT:0:2000}" || echo "Issue body: not available")
+
+Files by workstream:
+$(echo -e "$LLM_FILE_SUMMARY")"
+
+  # Call OpenRouter API (same pattern as _code-review.yml)
+  LLM_RESPONSE=""
+  set +e
+  LLM_RESPONSE=$(curl -s --max-time 10 -X POST "https://openrouter.ai/api/v1/chat/completions" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${OPENROUTER_API_KEY}" \
+    -H "HTTP-Referer: https://github.com/AI-Daemon/pi-daemon" \
+    -H "X-Title: pi-daemon-scope-gate" \
+    -d "$(jq -n \
+      --arg system "$LLM_SYSTEM" \
+      --arg user "$LLM_USER" \
+      '{
+        "model": "google/gemini-2.5-flash",
+        "messages": [
+          {"role": "system", "content": $system},
+          {"role": "user", "content": $user}
+        ],
+        "temperature": 0.1,
+        "max_tokens": 2048
+      }')" 2>/dev/null)
+  set -e
+
+  # Extract and parse the response
+  LLM_CONTENT=""
+  if [ -n "$LLM_RESPONSE" ]; then
+    LLM_CONTENT=$(echo "$LLM_RESPONSE" | jq -r '.choices[0].message.content // empty' 2>/dev/null || true)
+  fi
+
+  if [ -n "$LLM_CONTENT" ]; then
+    # Clean markdown fences if present
+    LLM_CONTENT=$(echo "$LLM_CONTENT" | sed 's/^```json//; s/^```//; s/```$//' | sed '/^$/d')
+
+    # Try to parse as JSON and build markdown suggestion
+    if echo "$LLM_CONTENT" | jq . >/dev/null 2>&1; then
+      SPLIT_COUNT=$(echo "$LLM_CONTENT" | jq '.splits | length' 2>/dev/null || echo 0)
+      if [ "$SPLIT_COUNT" -gt 0 ]; then
+        LLM_SUGGESTION=$'\n---\n\n### 💡 Suggested Split\n'
+
+        for i in $(seq 0 $((SPLIT_COUNT - 1))); do
+          SPLIT_TITLE=$(echo "$LLM_CONTENT" | jq -r ".splits[$i].title // \"PR $((i+1))\"")
+          SPLIT_EST=$(echo "$LLM_CONTENT" | jq -r ".splits[$i].estimated_lines // \"?\"")
+          SPLIT_RATIONALE=$(echo "$LLM_CONTENT" | jq -r ".splits[$i].rationale // empty")
+          SPLIT_FILES=$(echo "$LLM_CONTENT" | jq -r ".splits[$i].files // [] | .[]" 2>/dev/null || true)
+
+          LLM_SUGGESTION+=$'\n'"**PR $((i+1)): ${SPLIT_TITLE}** (~${SPLIT_EST} lines)"$'\n'
+          LLM_SUGGESTION+="Create issue: \"${SPLIT_TITLE}\""$'\n'
+          if [ -n "$SPLIT_FILES" ]; then
+            LLM_SUGGESTION+="Files: $(echo "$SPLIT_FILES" | tr '\n' ', ' | sed 's/,$//')"$'\n'
+          fi
+          if [ -n "$SPLIT_RATIONALE" ]; then
+            LLM_SUGGESTION+="*${SPLIT_RATIONALE}*"$'\n'
+          fi
+        done
+
+        MERGE_ORDER=$(echo "$LLM_CONTENT" | jq -r '.merge_order // empty' 2>/dev/null || true)
+        if [ -n "$MERGE_ORDER" ] && [ "$MERGE_ORDER" != "null" ]; then
+          LLM_SUGGESTION+=$'\n'"**Merge order:** ${MERGE_ORDER}"$'\n'
+        fi
+      fi
+    fi
+  fi
+
+  # Log result for CI debugging (never fails the gate)
+  if [ -n "$LLM_SUGGESTION" ]; then
+    echo "Phase 3: LLM split suggestion generated (${#LLM_SUGGESTION} chars)"
+  else
+    echo "Phase 3: LLM split suggestion skipped (empty or unparseable response)"
+  fi
+elif [ "$VERDICT" = "block" ]; then
+  echo "Phase 3: LLM split suggestion skipped (OPENROUTER_API_KEY not set)"
+fi
+
+# ── Build Comment ─────────────────────────────────────────
 
 build_workstream_table() {
   local table="| Workstream | Files |\n|------------|-------|\n"
@@ -260,7 +380,7 @@ build_workstream_table() {
 
 COMMENT_BODY=""
 
-GATE_VERSION="Scope Gate v2 · Phase 1+2: Mechanical checks + issue alignment · No LLM"
+GATE_VERSION="Scope Gate v3 · Phase 1+2+3"
 
 case "$VERDICT" in
   block)
@@ -276,7 +396,7 @@ $([ ${#WARNINGS[@]} -gt 0 ] && printf '%s\n' "${WARNINGS[@]}" || true)
 $(build_workstream_table)
 
 **How to fix:** Split this PR so each addresses a single concern. Keep source code and its tests together (one workstream), but separate CI changes, docs, and infrastructure into their own PRs.
-
+${LLM_SUGGESTION}
 ---
 *🔬 ${GATE_VERSION}*"
     ;;
