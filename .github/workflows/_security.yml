@@ -11,6 +11,23 @@ name: Security
 
 on:
   workflow_call:
+    inputs:
+      has_rust:
+        description: "PR contains Rust source changes"
+        type: boolean
+        default: true
+      has_deps:
+        description: "PR contains Cargo.toml/Cargo.lock changes"
+        type: boolean
+        default: true
+      has_ts:
+        description: "PR contains TypeScript/JavaScript changes"
+        type: boolean
+        default: true
+      has_npm:
+        description: "PR contains npm/yarn/pnpm lockfile changes"
+        type: boolean
+        default: true
 
 # Concurrency is primarily managed by the orchestrator (pr-pipeline.yml),
 # but we include a group here for the config review check and as a safety net.
@@ -164,6 +181,7 @@ jobs:
   license-check:
     name: License Compliance
     runs-on: ubuntu-latest
+    if: inputs.has_rust || inputs.has_deps
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2
@@ -175,7 +193,7 @@ jobs:
   unsafe-check:
     name: Unsafe Code Detection
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && inputs.has_rust
     steps:
       - uses: actions/checkout@v4
         with:
@@ -197,6 +215,7 @@ jobs:
   cargo-audit:
     name: Security Audit
     runs-on: ubuntu-latest
+    if: inputs.has_rust || inputs.has_deps
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -215,6 +234,7 @@ jobs:
   npm-security:
     name: npm Security Audit
     runs-on: ubuntu-latest
+    if: inputs.has_npm || inputs.has_ts
     steps:
       - uses: actions/checkout@v4
         with:

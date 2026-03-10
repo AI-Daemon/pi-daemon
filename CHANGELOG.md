@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Path-aware CI pipeline — skip irrelevant checks based on changed file types (#133)
+- `classify` job in `pr-pipeline.yml` — categorizes changed files into 7 boolean flags (`has_rust`, `has_ts`, `has_docs`, `has_deps`, `has_workflows`, `has_scripts`, `has_npm`) (#133)
+- All 7 reusable workflows accept optional boolean `workflow_call` inputs with `default: true` (fail-open) (#133)
+- Jobs inside reusable workflows use `if:` to skip when their flag is false — skipped checks register as `conclusion: skipped`, satisfying the Check Gate (#133)
+
+### Changed
+- `pr-pipeline.yml` — classify job runs after scope-gate; all `uses:` calls pass relevant flags (#133)
+- `_lint-format.yml` — `has_rust` input gates clippy, fmt, docs-compile (#133)
+- `_test.yml` — `has_rust` input gates unit tests, integration tests, coverage (#133)
+- `_build.yml` — `has_rust`/`has_deps`/`has_ts`/`has_npm` inputs gate build-release, binary-size, msrv, test-bridge (#133)
+- `_sandbox.yml` — `has_rust`/`has_deps` inputs gate sandbox integration (#133)
+- `_security.yml` — `has_rust`/`has_deps`/`has_ts`/`has_npm` inputs gate license-check, unsafe-check, cargo-audit, npm-security; secrets-scan and credential-patterns always run (#133)
+- `_hygiene.yml` — `has_rust`/`has_deps`/`has_docs` inputs gate sidebar-sync, markdown-lint, link-check, unused-deps, crate-doc-sync, todo-tracker; commit-msg-scan, commit-lint, pr-description, docs-drift, changelog always run (#133)
+- `_code-review.yml` — `has_rust`/`has_ts`/`has_workflows`/`has_docs`/`has_deps` inputs gate architectural-review, test-quality-review, configuration-review; classify and code-review gate always run (#133)
+- `docs/PR-Reviews.md` — documented change classification system, per-workflow skip matrix, PR type examples (#133)
+- `ci-main.yml` unchanged — calls workflows without inputs, so all jobs run post-merge (inputs default to `true`) (#133)
+
+### Previously Added
 - CI Orchestrator Phase 4 — hygiene consolidation, auto-approve update, cleanup (#128)
 - `_hygiene.yml` — reusable hygiene workflow consolidating commit-msg-scan, docs-check, pr-hygiene, and remaining ci.yml jobs (#128)
 - `ci-main.yml` — post-merge CI on main, reuses `_test.yml` and `_build.yml` (#128)

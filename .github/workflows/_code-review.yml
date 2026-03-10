@@ -10,6 +10,27 @@ name: Code Review
 
 on:
   workflow_call:
+    inputs:
+      has_rust:
+        description: "PR contains Rust source changes"
+        type: boolean
+        default: true
+      has_ts:
+        description: "PR contains TypeScript/JavaScript changes"
+        type: boolean
+        default: true
+      has_workflows:
+        description: "PR contains workflow file changes"
+        type: boolean
+        default: true
+      has_docs:
+        description: "PR contains documentation changes"
+        type: boolean
+        default: true
+      has_deps:
+        description: "PR contains Cargo.toml/Cargo.lock changes"
+        type: boolean
+        default: true
     secrets:
       OPENROUTER_API_KEY:
         required: true
@@ -119,7 +140,7 @@ jobs:
     name: Architectural Review
     runs-on: ubuntu-latest
     needs: [classify]
-    # Always run - handle skipping internally with explanatory comments
+    if: inputs.has_rust || inputs.has_ts
     steps:
       - name: Determine review action
         id: action
@@ -423,7 +444,7 @@ jobs:
     name: Test Quality Review
     runs-on: ubuntu-latest
     needs: [classify]
-    # Always run - handle skipping internally with explanatory comments
+    if: inputs.has_rust
     steps:
       - name: Determine review action
         id: action
@@ -725,7 +746,7 @@ jobs:
     name: Configuration Review
     runs-on: ubuntu-latest
     needs: [classify]
-    # Always run - handle skipping internally with explanatory comments
+    if: inputs.has_workflows || inputs.has_docs || inputs.has_deps
     steps:
       - name: Determine review action
         id: action

@@ -46,9 +46,61 @@ jobs:
       pull-requests: write
     secrets: inherit
 
-  lint-format:
+  # ─── Change Classification ────────────────────────────────
+  # Lightweight job (~5s) that categorizes changed files into boolean
+  # flags. Every reusable workflow receives the relevant flags as
+  # workflow_call inputs and uses `if:` on individual jobs to skip
+  # work that cannot be affected by the change set.
+  #
+  # Adding a new category: 1 grep line here + 1 input in the
+  # consuming workflow + 1 `if:` on the job.  No other files touched.
+  classify:
+    name: Classify Changes
     needs: [scope-gate]
+    runs-on: ubuntu-latest
+    outputs:
+      has_rust:      ${{ steps.classify.outputs.has_rust }}
+      has_ts:        ${{ steps.classify.outputs.has_ts }}
+      has_docs:      ${{ steps.classify.outputs.has_docs }}
+      has_deps:      ${{ steps.classify.outputs.has_deps }}
+      has_workflows: ${{ steps.classify.outputs.has_workflows }}
+      has_scripts:   ${{ steps.classify.outputs.has_scripts }}
+      has_npm:       ${{ steps.classify.outputs.has_npm }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Classify changed files
+        id: classify
+        run: |
+          FILES=$(git diff --name-only origin/main...HEAD)
+
+          has_rust=false
+          has_ts=false
+          has_docs=false
+          has_deps=false
+          has_workflows=false
+          has_scripts=false
+          has_npm=false
+
+          echo "$FILES" | grep -qE '\.rs$'                          && has_rust=true      || true
+          echo "$FILES" | grep -qE '\.(ts|js)$'                     && has_ts=true        || true
+          echo "$FILES" | grep -qE '(^docs/|\.md$)'                 && has_docs=true      || true
+          echo "$FILES" | grep -qE '(Cargo\.toml|Cargo\.lock)$'     && has_deps=true      || true
+          echo "$FILES" | grep -qE '^\.github/workflows/'           && has_workflows=true || true
+          echo "$FILES" | grep -qE '^scripts/'                      && has_scripts=true   || true
+          echo "$FILES" | grep -qE '(package\.json|package-lock\.json|yarn\.lock|pnpm-lock\.yaml)' && has_npm=true || true
+
+          for flag in has_rust has_ts has_docs has_deps has_workflows has_scripts has_npm; do
+            echo "$flag=${!flag}" >> "$GITHUB_OUTPUT"
+            echo "$flag=${!flag}"
+          done
+
+  lint-format:
+    needs: [classify]
     uses: ./.github/workflows/_lint-format.yml
+    with:
+      has_rust: ${{ needs.classify.outputs.has_rust == 'true' }}
     permissions:
       contents: read
     secrets: inherit
@@ -56,22 +108,33 @@ jobs:
   test:
     needs: [lint-format]
     uses: ./.github/workflows/_test.yml
+    with:
+      has_rust: ${{ needs.classify.outputs.has_rust == 'true' }}
     permissions:
       contents: read
       pull-requests: write
     secrets: inherit
 
   security:
-    needs: [scope-gate]
+    needs: [classify]
     uses: ./.github/workflows/_security.yml
+    with:
+      has_rust: ${{ needs.classify.outputs.has_rust == 'true' }}
+      has_deps: ${{ needs.classify.outputs.has_deps == 'true' }}
+      has_ts:   ${{ needs.classify.outputs.has_ts == 'true' }}
+      has_npm:  ${{ needs.classify.outputs.has_npm == 'true' }}
     permissions:
       contents: read
       pull-requests: write
     secrets: inherit
 
   hygiene:
-    needs: [scope-gate]
+    needs: [classify]
     uses: ./.github/workflows/_hygiene.yml
+    with:
+      has_rust: ${{ needs.classify.outputs.has_rust == 'true' }}
+      has_deps: ${{ needs.classify.outputs.has_deps == 'true' }}
+      has_docs: ${{ needs.classify.outputs.has_docs == 'true' }}
     permissions:
       contents: read
       pull-requests: write
@@ -80,14 +143,25 @@ jobs:
   build:
     needs: [lint-format]
     uses: ./.github/workflows/_build.yml
+    with:
+      has_rust: ${{ needs.classify.outputs.has_rust == 'true' }}
+      has_deps: ${{ needs.classify.outputs.has_deps == 'true' }}
+      has_ts:   ${{ needs.classify.outputs.has_ts == 'true' }}
+      has_npm:  ${{ needs.classify.outputs.has_npm == 'true' }}
     permissions:
       contents: read
       pull-requests: write
     secrets: inherit
 
   code-review:
-    needs: [lint-format, test]
+    needs: [lint-format, test, classify]
     uses: ./.github/workflows/_code-review.yml
+    with:
+      has_rust:      ${{ needs.classify.outputs.has_rust == 'true' }}
+      has_ts:        ${{ needs.classify.outputs.has_ts == 'true' }}
+      has_workflows: ${{ needs.classify.outputs.has_workflows == 'true' }}
+      has_docs:      ${{ needs.classify.outputs.has_docs == 'true' }}
+      has_deps:      ${{ needs.classify.outputs.has_deps == 'true' }}
     permissions:
       contents: read
       pull-requests: write
@@ -98,6 +172,9 @@ jobs:
   sandbox:
     needs: [build]
     uses: ./.github/workflows/_sandbox.yml
+    with:
+      has_rust: ${{ needs.classify.outputs.has_rust == 'true' }}
+      has_deps: ${{ needs.classify.outputs.has_deps == 'true' }}
     permissions:
       contents: read
       checks: write

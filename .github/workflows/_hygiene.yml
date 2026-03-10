@@ -8,6 +8,19 @@ name: Hygiene
 
 on:
   workflow_call:
+    inputs:
+      has_rust:
+        description: "PR contains Rust source changes"
+        type: boolean
+        default: true
+      has_deps:
+        description: "PR contains Cargo.toml/Cargo.lock changes"
+        type: boolean
+        default: true
+      has_docs:
+        description: "PR contains documentation changes"
+        type: boolean
+        default: true
 
 # Concurrency is primarily managed by the orchestrator (pr-pipeline.yml),
 # but we include a group here for the config review check and as a safety net.
@@ -138,6 +151,7 @@ jobs:
   sidebar-sync:
     name: Sidebar Sync
     runs-on: ubuntu-latest
+    if: inputs.has_docs
     steps:
       - uses: actions/checkout@v4
 
@@ -212,6 +226,7 @@ jobs:
   markdown-lint:
     name: Markdown Lint
     runs-on: ubuntu-latest
+    if: inputs.has_docs
     steps:
       - uses: actions/checkout@v4
 
@@ -224,6 +239,7 @@ jobs:
   link-check:
     name: Link Check
     runs-on: ubuntu-latest
+    if: inputs.has_docs
     steps:
       - uses: actions/checkout@v4
 
@@ -295,6 +311,7 @@ jobs:
   unused-deps:
     name: Unused Dependencies
     runs-on: ubuntu-latest
+    if: inputs.has_rust || inputs.has_deps
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -320,6 +337,7 @@ jobs:
   crate-doc-sync:
     name: Crate Docs Sync
     runs-on: ubuntu-latest
+    if: inputs.has_rust || inputs.has_deps || inputs.has_docs
     steps:
       - uses: actions/checkout@v4
       - name: Check crates documented in Architecture.md
@@ -345,6 +363,7 @@ jobs:
   todo-tracker:
     name: TODO Tracker
     runs-on: ubuntu-latest
+    if: inputs.has_rust || inputs.has_docs
     steps:
       - uses: actions/checkout@v4
         with:

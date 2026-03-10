@@ -2,6 +2,11 @@ name: Lint & Format
 
 on:
   workflow_call:
+    inputs:
+      has_rust:
+        description: "PR contains Rust source changes"
+        type: boolean
+        default: true
 
 # Concurrency is primarily managed by the orchestrator (pr-pipeline.yml),
 # but we include a group here for the config review check and as a safety net.
@@ -16,6 +21,7 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
+    if: inputs.has_rust
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -31,6 +37,7 @@ jobs:
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest
+    if: inputs.has_rust
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -43,6 +50,7 @@ jobs:
   docs-compile:
     name: Docs Compile
     runs-on: ubuntu-latest
+    if: inputs.has_rust
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
