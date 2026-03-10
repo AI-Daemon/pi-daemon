@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::convert::Infallible;
 use std::sync::Arc;
+use tracing::debug;
 use uuid::Uuid;
 
 // --- Request Types ---
@@ -174,6 +175,7 @@ pub struct ErrorDetails {
 /// GET /v1/models - OpenAI-compatible models list endpoint.
 pub async fn models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let models = discover_available_models(&state).await;
+    debug!("Models endpoint: returning {} models", models.len());
     
     Json(ModelsResponse {
         object: "list".to_string(),
@@ -383,6 +385,10 @@ fn estimate_tokens(text: &str) -> u32 {
 }
 
 /// Discover available models from multiple sources.
+/// 
+/// Note: This function performs in-memory operations only and is fast enough
+/// that caching is not currently needed. If performance becomes an issue with
+/// hundreds of agents, consider adding a TTL cache.
 async fn discover_available_models(state: &AppState) -> Vec<ModelInfo> {
     let mut models = Vec::new();
     let mut seen_models = HashSet::new();

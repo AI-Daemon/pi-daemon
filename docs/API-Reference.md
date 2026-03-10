@@ -191,6 +191,45 @@ Agent kinds: `pi_instance`, `web_chat`, `terminal_chat`, `api_client`, `hand`
 
 ## OpenAI-Compatible API
 
+### Models
+
+| Method | Path | Description | Status Codes |
+|--------|------|-------------|-------------|
+| `GET` | `/v1/models` | List available models | 200 |
+
+#### GET /v1/models
+
+Returns a list of available models that can be used with the chat completions endpoint. Models are discovered dynamically from:
+- Default model from daemon configuration
+- Models from currently registered agents
+- Well-known models from configured providers (Anthropic, OpenAI)
+
+**Response (200 OK):**
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "claude-sonnet-4-20250514",
+      "object": "model",
+      "created": 1773157157,
+      "owned_by": "anthropic"
+    },
+    {
+      "id": "gpt-4o",
+      "object": "model", 
+      "created": 1773157157,
+      "owned_by": "openai"
+    }
+  ]
+}
+```
+
+**curl:**
+```bash
+curl -s http://localhost:4200/v1/models | jq .
+```
+
 ### Chat Completions
 
 | Method | Path | Description | Status Codes |
