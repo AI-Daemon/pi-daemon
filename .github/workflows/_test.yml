@@ -9,6 +9,11 @@ name: Tests
 
 on:
   workflow_call:
+    inputs:
+      has_rust:
+        description: "PR contains Rust source changes"
+        type: boolean
+        default: true
 
 # Concurrency is primarily managed by the orchestrator (pr-pipeline.yml),
 # but we include a group here for the config review check and as a safety net.
@@ -25,6 +30,7 @@ jobs:
   test-unit:
     name: Unit Tests (${{ matrix.crate }})
     runs-on: ubuntu-latest
+    if: inputs.has_rust
     strategy:
       fail-fast: false
       matrix:
@@ -54,6 +60,7 @@ jobs:
   test-integration:
     name: Integration Tests
     runs-on: ubuntu-latest
+    if: inputs.has_rust
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -72,6 +79,7 @@ jobs:
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
+    if: inputs.has_rust
     needs: [test-unit]
     steps:
       - uses: actions/checkout@v4

@@ -10,6 +10,15 @@ name: Sandbox Test
 
 on:
   workflow_call:
+    inputs:
+      has_rust:
+        description: "PR contains Rust source changes"
+        type: boolean
+        default: true
+      has_deps:
+        description: "PR contains Cargo.toml/Cargo.lock changes"
+        type: boolean
+        default: true
 
 # Concurrency is primarily managed by the orchestrator (pr-pipeline.yml),
 # but we include a group here for the config review check and as a safety net.
@@ -21,6 +30,7 @@ jobs:
   sandbox:
     name: Sandbox Integration
     runs-on: ubuntu-latest
+    if: inputs.has_rust || inputs.has_deps
     timeout-minutes: 10
     env:
       CARGO_TERM_COLOR: always

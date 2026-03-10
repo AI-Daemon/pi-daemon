@@ -9,6 +9,23 @@ name: Build & Release
 
 on:
   workflow_call:
+    inputs:
+      has_rust:
+        description: "PR contains Rust source changes"
+        type: boolean
+        default: true
+      has_deps:
+        description: "PR contains Cargo.toml/Cargo.lock changes"
+        type: boolean
+        default: true
+      has_ts:
+        description: "PR contains TypeScript/JavaScript changes"
+        type: boolean
+        default: true
+      has_npm:
+        description: "PR contains npm/yarn/pnpm lockfile changes"
+        type: boolean
+        default: true
 
 # Concurrency is primarily managed by the orchestrator (pr-pipeline.yml),
 # but we include a group here for the config review check and as a safety net.
@@ -25,7 +42,7 @@ jobs:
   binary-size:
     name: Binary Size
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && (inputs.has_rust || inputs.has_deps)
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -84,6 +101,7 @@ jobs:
   build-release:
     name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
+    if: inputs.has_rust || inputs.has_deps
     strategy:
       fail-fast: false
       matrix:
@@ -127,6 +145,7 @@ jobs:
   msrv:
     name: Minimum Supported Rust Version
     runs-on: ubuntu-latest
+    if: inputs.has_rust || inputs.has_deps
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -143,6 +162,7 @@ jobs:
   test-bridge:
     name: Pi Bridge Extension
     runs-on: ubuntu-latest
+    if: inputs.has_ts || inputs.has_npm
     defaults:
       run:
         working-directory: extensions/pi-daemon-bridge

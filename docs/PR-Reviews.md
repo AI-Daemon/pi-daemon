@@ -133,15 +133,13 @@ The PR Pipeline (`pr-pipeline.yml`) is the sole orchestrator for all PR checks. 
 
 **Pipeline dependency graph:**
 ```
-scope-gate
-    │
-    ├──→ lint-format ──┬──→ test ──────────→ code-review (LLM reviews)
-    │                  │
-    │                  └──→ build ─────────→ sandbox (integration)
-    │
-    ├──→ security (parallel with lint)
-    │
-    └──→ hygiene (parallel with lint)
+scope-gate ──→ classify ──→ lint-format ──┬──→ test ──────────→ code-review (LLM reviews)
+                       │                  │
+                       │                  └──→ build ─────────→ sandbox (integration)
+                       │
+                       ├──→ security (parallel with lint)
+                       │
+                       └──→ hygiene (parallel with lint)
 ```
 
 **Key ordering guarantees:**
@@ -165,6 +163,60 @@ The Scope Gate evaluates whether a PR is focused enough to review reliably. It r
 On block/warn, a PR comment is posted with the workstream breakdown and guidance on how to split. On pass, no comment (no clutter). If a previously-blocked PR is fixed and now passes, the stale comment is deleted.
 
 **Architecture:** The logic lives in `scripts/scope-gate.sh` — a standalone bash script testable locally via `scripts/test-scope-gate.sh` (27 test cases). The workflow (`_scope-gate.yml`) is a thin reusable wrapper that gathers PR metadata and calls the script.
+
+### 🔀 Change Classification (#133)
+
+After the scope gate passes, a lightweight **classify** job (~5s) categorizes changed files into boolean flags. These flags are passed as `workflow_call` inputs to every reusable workflow. Jobs inside each workflow use `if:` to skip when their flag is false.
+
+**Why this approach:**
+- Every reusable workflow is always *called* (check runs always register), but individual jobs may be skipped.
+- Skipped jobs produce `conclusion: skipped` which the Check Gate treats as terminal — no merge blocking.
+- All inputs default to `true`, so `ci-main.yml` (post-merge) runs everything without changes.
+- Adding a new change category requires: 1 grep line in classify + 1 input in the consuming workflow + 1 `if:` on the job.
+
+**Classification flags:**
+
+| Flag | Pattern | Example files |
+|------|---------|--------------|
+| `has_rust` | `\.rs$` | `crates/pi-daemon-kernel/src/lib.rs` |
+| `has_ts` | `\.(ts\|js)$` | `extensions/pi-daemon-bridge/src/index.ts` |
+| `has_docs` | `^docs/` or `\.md$` | `docs/Architecture.md`, `CHANGELOG.md` |
+| `has_deps` | `Cargo\.toml` or `Cargo\.lock` | `Cargo.toml`, `crates/*/Cargo.toml` |
+| `has_workflows` | `^\.github/workflows/` | `.github/workflows/pr-pipeline.yml` |
+| `has_scripts` | `^scripts/` | `scripts/scope-gate.sh` |
+| `has_npm` | `package\.json`, lockfiles | `extensions/pi-daemon-bridge/package.json` |
+
+**Per-workflow skip matrix:**
+
+| Workflow | Inputs | Jobs that skip | Condition |
+|----------|--------|---------------|-----------|
+| `_lint-format.yml` | `has_rust` | clippy, fmt, docs-compile | `!has_rust` |
+| `_test.yml` | `has_rust` | test-unit, test-integration, coverage | `!has_rust` |
+| `_build.yml` | `has_rust`, `has_deps`, `has_ts`, `has_npm` | build-release, binary-size, msrv | `!has_rust && !has_deps` |
+| | | test-bridge | `!has_ts && !has_npm` |
+| `_sandbox.yml` | `has_rust`, `has_deps` | sandbox | `!has_rust && !has_deps` |
+| `_security.yml` | `has_rust`, `has_deps`, `has_ts`, `has_npm` | license-check, cargo-audit | `!has_rust && !has_deps` |
+| | | unsafe-check | `!has_rust` |
+| | | npm-security | `!has_npm && !has_ts` |
+| | | secrets-scan, credential-patterns | *(never skip)* |
+| `_hygiene.yml` | `has_rust`, `has_deps`, `has_docs` | sidebar-sync, markdown-lint, link-check | `!has_docs` |
+| | | unused-deps | `!has_rust && !has_deps` |
+| | | crate-doc-sync | `!has_rust && !has_deps && !has_docs` |
+| | | todo-tracker | `!has_rust && !has_docs` |
+| | | commit-msg-scan, commit-lint, pr-description, docs-drift, changelog | *(never skip)* |
+| `_code-review.yml` | `has_rust`, `has_ts`, `has_workflows`, `has_docs`, `has_deps` | architectural-review | `!has_rust && !has_ts` |
+| | | test-quality-review | `!has_rust` |
+| | | configuration-review | `!has_workflows && !has_docs && !has_deps` |
+| | | classify, code-review (gate) | *(never skip)* |
+
+**PR type examples:**
+
+| PR Type | Flags set | What runs | ~Time |
+|---------|-----------|-----------|-------|
+| Docs-only (`docs/*.md`, `CHANGELOG.md`) | `has_docs` | scope-gate, classify, secrets-scan, credential-patterns, commit-msg-scan, commit-lint, pr-description, docs-drift, changelog, sidebar-sync, markdown-lint, link-check, todo-tracker, crate-doc-sync, classify+config-review+gate | ~30-45s |
+| CI-workflow-only (`.github/workflows/*.yml`) | `has_workflows` | scope-gate, classify, secrets-scan, credential-patterns, commit-msg-scan, commit-lint, pr-description, docs-drift, changelog, classify+config-review+gate | ~30-45s |
+| Rust code (`crates/*.rs`, `Cargo.toml`, docs) | `has_rust`, `has_deps`, `has_docs` | Everything | ~20 min |
+| TypeScript-only (`extensions/pi-daemon-bridge/*`) | `has_ts`, `has_npm` | scope-gate, classify, test-bridge, secrets-scan, credential-patterns, npm-security, commit-msg-scan, commit-lint, pr-description, docs-drift, changelog, classify+arch-review+gate | ~1-2 min |
 
 ### 🧹 Lint & Format
 
