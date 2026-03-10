@@ -191,44 +191,38 @@ jobs:
             fi
           done < source_files.txt > /tmp/arch_diff.txt
           
-          # Create the architectural review prompt with real project context
-          echo "You are an architectural code reviewer for the pi-daemon project — a Rust-based agent kernel daemon." > /tmp/arch_prompt.txt
-          echo "" >> /tmp/arch_prompt.txt
-          echo "Your job is to review a pull request diff against the project's architecture documentation and report whether the changes conform to the documented architecture, conventions, and best practices." >> /tmp/arch_prompt.txt
-          echo "" >> /tmp/arch_prompt.txt
-          echo "## Dual-Layer Review Framework" >> /tmp/arch_prompt.txt
-          echo "Perform BOTH layers of analysis. BOTH must pass for overall PASS verdict." >> /tmp/arch_prompt.txt
-          echo "" >> /tmp/arch_prompt.txt
-          echo "### Layer 1: Technical Compliance Checklist" >> /tmp/arch_prompt.txt
-          echo "1. **Crate Structure**: Do new files/modules live in the correct crate per the architecture doc? Is the dependency graph respected (types → kernel → api → cli, no cycles)?" >> /tmp/arch_prompt.txt
-          echo "2. **Concurrency Patterns**: Does the code use DashMap (not Mutex<HashMap>) for concurrent maps? broadcast channels for pub/sub? Arc for shared state?" >> /tmp/arch_prompt.txt
-          echo "3. **Error Handling**: Does the code use thiserror for typed errors and anyhow at boundaries? No unwrap() in library code (only in tests)?" >> /tmp/arch_prompt.txt
-          echo "4. **Naming Conventions**: snake_case everywhere? Types match their module names? Test naming follows test_<thing>_<behavior>?" >> /tmp/arch_prompt.txt
-          echo "5. **API Conventions**: Do new routes follow the existing pattern (State extractor, Json responses, proper status codes)? Are they documented in API-Reference.md?" >> /tmp/arch_prompt.txt
-          echo "6. **Testing**: Are there unit tests for new public functions? Integration tests for new API endpoints? Do tests use the test-utils helpers (test_kernel, test_server, TestClient)?" >> /tmp/arch_prompt.txt
-          echo "7. **Security**: No unwrap() on user input. API key middleware applied to new routes. Sensitive values not logged." >> /tmp/arch_prompt.txt
-          echo "8. **Test Infrastructure**: New tests use FullTestServer from test-utils (NOT duplicated start_test_server boilerplate). Test assertions use project macros (assert_status!, assert_json_ok!, assert_openai_completion!)." >> /tmp/arch_prompt.txt
-          echo "" >> /tmp/arch_prompt.txt
-          echo "### Layer 2: Architectural Expert Analysis" >> /tmp/arch_prompt.txt
-          echo "Beyond checklist compliance, evaluate:" >> /tmp/arch_prompt.txt
-          echo "- **System Design Impact**: How do these changes affect overall architecture?" >> /tmp/arch_prompt.txt
-          echo "- **Maintainability**: Will this code be easy to maintain and evolve?" >> /tmp/arch_prompt.txt
-          echo "- **Performance Implications**: Any potential performance bottlenecks or improvements?" >> /tmp/arch_prompt.txt
-          echo "- **Integration Quality**: How well does this integrate with existing patterns?" >> /tmp/arch_prompt.txt
-          echo "- **Design Consistency**: Does this follow established design principles?" >> /tmp/arch_prompt.txt
-          echo "" >> /tmp/arch_prompt.txt
-          echo "## Response Format (JSON only, no markdown wrapping):" >> /tmp/arch_prompt.txt
-          echo '{' >> /tmp/arch_prompt.txt
-          echo '  "verdict": "PASS|FAIL",  ' >> /tmp/arch_prompt.txt
-          echo '  "summary": "Brief overall summary of architectural review",  ' >> /tmp/arch_prompt.txt
-          echo '  "checklist_verdict": "PASS|FAIL",  ' >> /tmp/arch_prompt.txt
-          echo '  "expert_verdict": "PASS|FAIL",  ' >> /tmp/arch_prompt.txt
-          echo '  "checks": [  ' >> /tmp/arch_prompt.txt
-          echo '    {"name": "Check Name", "status": "pass|fail|warning", "detail": "Explanation"}  ' >> /tmp/arch_prompt.txt
-          echo '  ],  ' >> /tmp/arch_prompt.txt
-          echo '  "issues": ["List of specific issues found"],  ' >> /tmp/arch_prompt.txt
-          echo '  "notes": "Additional architectural observations"  ' >> /tmp/arch_prompt.txt
-          echo '}' >> /tmp/arch_prompt.txt
+          # Create the architectural review prompt — tight, no fluff
+          cat > /tmp/arch_prompt.txt << 'ARCH_PROMPT'
+          You review Rust code for pi-daemon against its architecture docs (provided below). You are strict. You catch real problems and ignore cosmetic ones.
+
+          ## Rules
+          - FAIL if dependency graph is violated (types→kernel→api→cli, no reverse deps)
+          - FAIL if unwrap() appears in library code (tests are fine)
+          - FAIL if Mutex<HashMap> is used instead of DashMap
+          - FAIL if println! is used instead of tracing macros
+          - FAIL if new public items lack /// doc comments
+          - FAIL if tests duplicate start_test_server() instead of using FullTestServer from test-utils
+          - WARNING if new API routes lack integration tests
+          - WARNING if error paths are untested
+
+          ## Score each dimension 0-3
+          0 = Violation (FAIL). 1 = Concern (needs changes). 2 = Acceptable. 3 = Excellent.
+
+          Dimensions:
+          - dep_graph: Dependency graph compliance (types→kernel→api→cli, no cycles)
+          - concurrency: DashMap, broadcast, Arc patterns
+          - errors: thiserror for types, anyhow at boundaries, no unwrap in lib
+          - testing: Unit tests for public fns, integration tests for endpoints, uses test-utils
+          - naming: snake_case, test_<thing>_<behavior> pattern
+          - security: No unwrap on user input, no secrets in code, auth middleware on routes
+          - docs: /// on public items, docs/*.md updated if needed
+
+          PASS: no dimension scores 0 AND average >= 2.0
+          FAIL: any dimension scores 0 OR average < 2.0
+
+          ## Output format — JSON only, no markdown, no explanation outside the JSON
+          {"verdict":"PASS|FAIL","summary":"one sentence","checklist_verdict":"PASS|FAIL","expert_verdict":"PASS|FAIL","scores":{"dep_graph":N,"concurrency":N,"errors":N,"testing":N,"naming":N,"security":N,"docs":N},"checks":[{"name":"string","status":"pass|fail|warning","detail":"string"}],"issues":["string"],"notes":"string"}
+          ARCH_PROMPT
 
           # Prepare the input (architecture context + diff)
           echo "## Context" > /tmp/arch_input.txt
@@ -457,43 +451,37 @@ jobs:
             fi
           done < test_files.txt > /tmp/test_diff.txt
           
-          # Create the test quality review prompt with project context
-          echo "You are a test quality expert reviewing test code changes for the pi-daemon project — a Rust-based agent kernel daemon." > /tmp/test_prompt.txt
-          echo "" >> /tmp/test_prompt.txt
-          echo "Your job is to analyze test file changes and evaluate test quality, coverage patterns, and testing best practices." >> /tmp/test_prompt.txt
-          echo "" >> /tmp/test_prompt.txt
-          echo "## Dual-Layer Review Framework" >> /tmp/test_prompt.txt
-          echo "Perform BOTH layers of analysis. BOTH must pass for overall PASS verdict." >> /tmp/test_prompt.txt
-          echo "" >> /tmp/test_prompt.txt
-          echo "### Layer 1: Technical Compliance Checklist" >> /tmp/test_prompt.txt
-          echo "1. **Test Structure**: Proper test module organization? Tests in correct files (test_*.rs, *_test.go, *.test.ts, spec/)?" >> /tmp/test_prompt.txt
-          echo "2. **Naming Conventions**: Test functions follow test_<thing>_<behavior> pattern?" >> /tmp/test_prompt.txt
-          echo "3. **Test Helpers**: Uses project test-utils helpers (FullTestServer, TestClient, assert_status!, assert_json_ok!, assert_openai_completion!) — NOT duplicated start_test_server() boilerplate?" >> /tmp/test_prompt.txt
-          echo "4. **Error Testing**: Tests both success and failure cases? Error conditions properly tested?" >> /tmp/test_prompt.txt
-          echo "5. **Assertions**: Clear, meaningful assertions? No flaky or timing-dependent tests?" >> /tmp/test_prompt.txt
-          echo "6. **Isolation**: Tests are independent? Proper setup/teardown? No shared state issues?" >> /tmp/test_prompt.txt
-          echo "7. **Coverage**: New public functions have corresponding unit tests? API endpoints have integration tests?" >> /tmp/test_prompt.txt
-          echo "" >> /tmp/test_prompt.txt
-          echo "### Layer 2: Test Quality Expert Analysis" >> /tmp/test_prompt.txt
-          echo "Beyond checklist compliance, evaluate:" >> /tmp/test_prompt.txt
-          echo "- **Test Effectiveness**: Do tests actually validate the intended behavior?" >> /tmp/test_prompt.txt
-          echo "- **Edge Case Coverage**: Are boundary conditions and edge cases tested?" >> /tmp/test_prompt.txt
-          echo "- **Maintainability**: Are tests readable, clear, and easy to maintain?" >> /tmp/test_prompt.txt
-          echo "- **Performance**: Any performance testing where appropriate?" >> /tmp/test_prompt.txt
-          echo "- **Integration Quality**: Do integration tests cover realistic scenarios?" >> /tmp/test_prompt.txt
-          echo "" >> /tmp/test_prompt.txt
-          echo "## Response Format (JSON only, no markdown wrapping):" >> /tmp/test_prompt.txt
-          echo '{' >> /tmp/test_prompt.txt
-          echo '  "verdict": "PASS|FAIL",  ' >> /tmp/test_prompt.txt
-          echo '  "summary": "Brief overall summary of test quality review",  ' >> /tmp/test_prompt.txt
-          echo '  "checklist_verdict": "PASS|FAIL",  ' >> /tmp/test_prompt.txt
-          echo '  "expert_verdict": "PASS|FAIL",  ' >> /tmp/test_prompt.txt
-          echo '  "checks": [  ' >> /tmp/test_prompt.txt
-          echo '    {"name": "Check Name", "status": "pass|fail|warning", "detail": "Explanation"}  ' >> /tmp/test_prompt.txt
-          echo '  ],  ' >> /tmp/test_prompt.txt
-          echo '  "issues": ["List of specific test quality issues found"],  ' >> /tmp/test_prompt.txt
-          echo '  "notes": "Additional test quality observations"  ' >> /tmp/test_prompt.txt
-          echo '}' >> /tmp/test_prompt.txt
+          # Create the test quality review prompt — tight, enforces project standards
+          cat > /tmp/test_prompt.txt << 'TEST_PROMPT'
+          You review test code for pi-daemon against the project testing standards (provided below). You enforce the rules strictly.
+
+          ## Hard FAIL rules (any one triggers FAIL)
+          - Test file contains a manual start_test_server() function instead of FullTestServer::new()
+          - Test uses raw reqwest::Client instead of TestClient from test-utils
+          - Test uses #[ignore] attribute
+          - Test name does not follow test_<thing>_<behavior> pattern
+          - Test only covers the happy path with no error/edge case testing
+          - Test uses tokio::time::sleep for timing instead of polling with timeout
+          - Test uses println! instead of tracing or --nocapture
+
+          ## Score each dimension 0-3
+          0 = Violation (FAIL). 1 = Concern. 2 = Acceptable. 3 = Excellent.
+
+          Dimensions:
+          - helpers: Uses FullTestServer, TestClient, assertion macros from test-utils
+          - naming: test_<thing>_<behavior> pattern, descriptive names
+          - error_coverage: Tests error paths (400, 404, 422), not just happy paths
+          - edge_cases: Boundary conditions, unicode, empty input, concurrent access
+          - isolation: No shared mutable state, uses TestKernel for temp dirs
+          - assertions: Uses expect() not unwrap(), uses project macros, clear messages
+          - structure: Tests in correct location, proper async patterns
+
+          PASS: no dimension scores 0 AND average >= 2.0
+          FAIL: any dimension scores 0 OR average < 2.0
+
+          ## Output format — JSON only, no markdown, no explanation outside the JSON
+          {"verdict":"PASS|FAIL","summary":"one sentence","checklist_verdict":"PASS|FAIL","expert_verdict":"PASS|FAIL","scores":{"helpers":N,"naming":N,"error_coverage":N,"edge_cases":N,"isolation":N,"assertions":N,"structure":N},"checks":[{"name":"string","status":"pass|fail|warning","detail":"string"}],"issues":["string"],"notes":"string"}
+          TEST_PROMPT
 
           # Prepare the input (test context + diff)
           echo "## Context" > /tmp/test_input.txt
@@ -758,19 +746,35 @@ jobs:
             exit 0
           fi
           
-          # Create the configuration review prompt (using simpler approach)
-          echo "You are a DevOps and documentation expert reviewing configuration changes in the pi-daemon project." > /tmp/config_prompt.txt
-          echo "" >> /tmp/config_prompt.txt
-          echo "Perform dual-layer review: 1) Technical Compliance 2) DevOps Expert Analysis" >> /tmp/config_prompt.txt
-          echo "BOTH layers must pass for overall PASS verdict." >> /tmp/config_prompt.txt
-          echo "" >> /tmp/config_prompt.txt
-          echo "Layer 1 Checklist: YAML syntax, CI/CD naming, documentation format, changelog format, workflow patterns, config fields, file structure" >> /tmp/config_prompt.txt
-          echo "" >> /tmp/config_prompt.txt
-          echo "Layer 2 Expert Analysis: Performance impact, maintainability, documentation clarity, integration, security implications, best practices" >> /tmp/config_prompt.txt
-          echo "" >> /tmp/config_prompt.txt
-          echo "Output JSON: {verdict:PASS/FAIL, checklist_verdict:PASS/FAIL, expert_verdict:PASS/FAIL, checks:[{name,status,detail}], devops_analysis:string, issues:[{severity,file,description}], notes:string}" >> /tmp/config_prompt.txt
-          echo "" >> /tmp/config_prompt.txt
-          echo "Rules: Overall FAIL if either layer FAIL. Overall PASS only if both PASS. Focus on DevOps best practices." >> /tmp/config_prompt.txt
+          # Create the configuration review prompt — tight, enforces CI/docs standards
+          cat > /tmp/config_prompt.txt << 'CONFIG_PROMPT'
+          You review CI/CD, documentation, and config changes for pi-daemon against the existing check catalog (provided below). You catch real problems.
+
+          ## Hard FAIL rules
+          - New workflow job not documented in docs/PR-Reviews.md
+          - YAML syntax error or invalid job dependency
+          - Workflow uses hardcoded secrets instead of secrets context
+          - CHANGELOG.md not updated when .rs, .yml, or Cargo.toml files changed
+          - docs/ page added but not in _Sidebar.md
+          - Workflow missing concurrency group (allows redundant parallel runs)
+
+          ## Score each dimension 0-3
+          0 = Violation (FAIL). 1 = Concern. 2 = Acceptable. 3 = Excellent.
+
+          Dimensions:
+          - yaml_correctness: Valid syntax, correct job deps, proper step ordering
+          - naming: Job names match conventions, descriptive step names
+          - docs_sync: PR-Reviews.md, Architecture.md, _Sidebar.md updated as needed
+          - security: No hardcoded secrets, proper permissions block, minimal scopes
+          - changelog: CHANGELOG.md updated for meaningful changes
+          - maintainability: DRY workflows, clear comments, no dead code
+
+          PASS: no dimension scores 0 AND average >= 2.0
+          FAIL: any dimension scores 0 OR average < 2.0
+
+          ## Output format — JSON only, no markdown, no explanation outside the JSON
+          {"verdict":"PASS|FAIL","summary":"one sentence","checklist_verdict":"PASS|FAIL","expert_verdict":"PASS|FAIL","scores":{"yaml_correctness":N,"naming":N,"docs_sync":N,"security":N,"changelog":N,"maintainability":N},"checks":[{"name":"string","status":"pass|fail|warning","detail":"string"}],"issues":[{"severity":"error|warning|info","file":"string","description":"string"}],"notes":"string"}
+          CONFIG_PROMPT
 
           # Build the user input  
           echo "## Configuration Context" > /tmp/config_input.txt
