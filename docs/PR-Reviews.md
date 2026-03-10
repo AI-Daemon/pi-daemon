@@ -393,8 +393,9 @@ Comprehensive code review system with intelligent file classification and specia
 - **⚙️ Configuration Review:** Config files (.yml, .toml, .md) for DevOps and documentation standards
 - **❌ Auto-Exclude:** Generated files (package-lock.json, node_modules/, dist/) to prevent token overflow
 - **🚀 Performance:** 75-97% faster execution through focused, conditional review execution
-- **🎯 Single Check per Review:** Job status shows pass/fail, detailed analysis in PR comments (no duplicate checks)
-- **💬 Always Comment:** Every review type comments — detailed analysis when files present, clear skip explanation when no relevant files
+- **🎯 Single Check per Review:** Job status shows pass/fail, detailed analysis in native PR reviews (no duplicate checks)
+- **📝 Native PR Reviews:** All 3 review types post native GitHub PR reviews with inline annotations on specific files/lines (not timeline comments)
+- **⏭️ Skip → Step Summary:** When a review type has no relevant files, a skip message goes to `$GITHUB_STEP_SUMMARY` instead of a PR comment — zero timeline noise
 
 **🎯 Clean Single-Check Architecture:**
 
@@ -418,15 +419,19 @@ Comprehensive code review system with intelligent file classification and specia
 - ❌ **FAIL:** Either layer can fail any review - neither can override into passing  
 - **Conditional Execution:** Only runs reviews for relevant file types (architectural for source, test quality for tests, etc.)
 
-**📊 Unified Output:**
+**📊 Native Review Output (#139):**
 - **File Classification:** Clear breakdown of what files triggered which reviews
-- **Multi-Review Results:** Separate GitHub checks for each review type (🏗️ Architectural, 🧪 Test Quality, ⚙️ Configuration)
-- **Performance Optimization:** Focused context per review type, shared file classification
+- **Multi-Review Results:** Separate native PR reviews for each type (🏗️ Architectural, 🧪 Test Quality, ⚙️ Configuration)
+- **Inline Annotations:** LLM findings with `file` + `line` appear as inline comments in the "Files changed" tab
+- **Verdict Events:** `PASS` → `COMMENT` review, `FAIL` → `REQUEST_CHANGES` review (shows in merge box)
+- **Dedup:** Previous bot reviews for each type are dismissed before posting new ones (keyed by HTML comment markers like `<!-- pi-daemon:arch-review -->`)
+- **Backward Compat:** Actions/issues without file/line fall back to the top-level review body
+- **Skip Handling:** Reviews with no relevant files write to `$GITHUB_STEP_SUMMARY` instead of PR comments
 - **Auto-Pass Logic:** PRs with only generated files skip all reviews
 
 **💰 Cost:** ~$0.01–0.05 per PR review (Gemini 2.5 Flash pricing), token usage optimized through intelligent filtering.
 
-**🔧 Implementation:** Full OpenRouter + Gemini 2.5 Flash integration with dual-layer analysis framework, size-based fallbacks, and comprehensive error handling for both Architectural and Test Quality reviews. Configuration Review has been LLM-powered since initial implementation.
+**🔧 Implementation:** Full OpenRouter + Gemini 2.5 Flash integration with dual-layer analysis framework, size-based fallbacks, and comprehensive error handling for both Architectural and Test Quality reviews. Configuration Review has been LLM-powered since initial implementation. As of #139, all reviews use `pulls.createReview()` with inline annotations instead of `issues.createComment()`.
 
 ---
 
@@ -499,7 +504,7 @@ permissions:
   checks: write           # report check results
 ```
 
-**Why this matters:** Several jobs (`coverage`, `binary-size`, hygiene checks) use `actions/github-script` to post PR comments via `github.rest.issues.createComment()`. Without `pull-requests: write`, these calls fail with `403 Resource not accessible by integration`.
+**Why this matters:** Several jobs (`coverage`, `binary-size`, hygiene checks) use `actions/github-script` to post PR comments or reviews. Code review jobs use `github.rest.pulls.createReview()` for native PR reviews with inline annotations, and `pulls.dismissReview()` to remove stale reviews on re-push. Without `pull-requests: write`, these calls fail with `403 Resource not accessible by integration`.
 
 **When adding new checks:** Add the job to the appropriate reusable `_*.yml` workflow. Permissions are granted at the orchestrator level when calling each reusable workflow. If a new workflow needs additional scopes, add them to the `permissions:` block on the corresponding `uses:` entry in `pr-pipeline.yml`.
 

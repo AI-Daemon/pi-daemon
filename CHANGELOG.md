@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- PR Output Layer Phase 1: Convert LLM code reviews to native Pull Request Reviews with inline annotations (#139)
+  - All 3 review types (architectural, test quality, configuration) now use `pulls.createReview()` instead of `issues.createComment()`
+  - LLM prompt schemas extended with optional `file` and `line` fields in `actions` and `issues` arrays
+  - Inline review comments appear on specific files/lines in the "Files changed" tab
+  - FAIL verdicts use `REQUEST_CHANGES` event; PASS verdicts use `COMMENT` event
+  - Previous bot reviews are dismissed before posting new ones (dedup via HTML comment markers)
+  - Actions/issues without `file`/`line` gracefully fall back to the top-level review body
+  - Skip notifications (3 sites) moved from PR comments to `$GITHUB_STEP_SUMMARY`
+  - `auto-approve.yml` APPROVE reviews are unaffected (dismiss filters by body marker, not user)
+
 ### Added
 - Scope Gate Phase 3: LLM-assisted split suggestions (#121)
   - When the mechanical gate BLOCKs a PR, calls Gemini 2.5 Flash via OpenRouter to suggest how to split it

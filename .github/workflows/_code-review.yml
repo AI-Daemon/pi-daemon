@@ -153,21 +153,11 @@ jobs:
             echo "skip_reason=No source files (.rs, .ts, .js) detected for architectural review" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create skip comment and check
+      - name: Report skip to step summary
         if: steps.action.outputs.action == 'skip'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const skipReason = '${{ steps.action.outputs.skip_reason }}';
-            
-            // Create explanatory skip comment (no GitHub check needed - job status shows skip)
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: "## ⏭️ Architectural Review: Skipped\n\n" +
-                    "No source files (.rs, .ts, .js) in this PR — nothing to review architecturally. Looks like a docs/config-only change."
-            });
+        run: |
+          echo "## ⏭️ Architectural Review: Skipped" >> $GITHUB_STEP_SUMMARY
+          echo "No source files (.rs, .ts, .js) in this PR — nothing to review architecturally." >> $GITHUB_STEP_SUMMARY
 
       - name: Checkout repo
         if: steps.action.outputs.action == 'review'
@@ -245,12 +235,15 @@ jobs:
           FAIL: any dimension scores 0 OR average < 2.0
 
           ## Output format — JSON only, no markdown, no explanation outside the JSON
-          {"verdict":"PASS|FAIL","summary":"one sentence","checklist_verdict":"PASS|FAIL","expert_verdict":"PASS|FAIL","scores":{"dep_graph":N,"concurrency":N,"errors":N,"testing":N,"naming":N,"security":N,"docs":N},"checks":[{"name":"string","status":"pass|fail|warning","detail":"string"}],"issues":["string"],"actions":["concrete task the author should do, e.g. Add integration test for /api/foo endpoint","Move bar.rs from pi-daemon-api to pi-daemon-kernel per dependency graph"],"notes":"string"}
+          {"verdict":"PASS|FAIL","summary":"one sentence","checklist_verdict":"PASS|FAIL","expert_verdict":"PASS|FAIL","scores":{"dep_graph":N,"concurrency":N,"errors":N,"testing":N,"naming":N,"security":N,"docs":N},"checks":[{"name":"string","status":"pass|fail|warning","detail":"string"}],"issues":[{"description":"string","file":"string (optional)","line":"N (optional)"}],"actions":[{"action":"concrete task the author should do, e.g. Add integration test for /api/foo endpoint","file":"string (optional)","line":"N (optional)"}],"notes":"string"}
 
-          ## actions field rules
-          - Each action is a single concrete task the PR author can act on immediately
-          - Start with a verb: Add, Move, Remove, Rename, Replace, Update, Fix, Test
-          - Reference specific files, functions, or lines when possible
+          ## actions and issues field rules
+          - Each action is an object: {"action": "verb phrase", "file": "path/to/file.rs", "line": 42}
+          - Each issue is an object: {"description": "what is wrong", "file": "path/to/file.rs", "line": 42}
+          - "file" and "line" are optional but strongly preferred — include them when you can identify the exact location
+          - The "file" value must match a filename from the diff headers (=== filename ===)
+          - The "line" value must be a line number from the NEW side of the diff (+ lines)
+          - Start action text with a verb: Add, Move, Remove, Rename, Replace, Update, Fix, Test
           - If verdict is PASS, actions should be empty or contain only minor suggestions
           - If verdict is FAIL, actions must list every required fix — the author should be able to work through them like a checklist
           ARCH_PROMPT
@@ -368,7 +361,7 @@ jobs:
           fi
           echo "Architectural review passed"
 
-      - name: Create Architectural Check
+      - name: Create Architectural Review
         if: steps.action.outputs.action == 'review'
         uses: actions/github-script@v7
         with:
@@ -379,12 +372,35 @@ jobs:
               const raw = fs.readFileSync('/tmp/arch_review_result.json', 'utf8');
               review = JSON.parse(raw);
             } catch (e) {
-              review = { verdict: 'PASS', summary: 'Parse error — defaulting to PASS', scores: {}, checks: [], issues: [], notes: '' };
+              review = { verdict: 'PASS', summary: 'Parse error — defaulting to PASS', scores: {}, checks: [], issues: [], actions: [], notes: '' };
             }
 
             const verdict = review.verdict || 'PASS';
             const icon = verdict === 'PASS' ? '✅' : '❌';
             const sourceCount = '${{ needs.classify.outputs.source_count }}';
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = context.issue.number;
+            const REVIEW_MARKER = '<!-- pi-daemon:arch-review -->';
+
+            // Dismiss previous bot review for this type
+            const reviews = await github.rest.pulls.listReviews({ owner, repo, pull_number });
+            const existing = reviews.data.find(r =>
+              r.user.type === 'Bot' &&
+              r.body && r.body.includes(REVIEW_MARKER)
+            );
+            if (existing) {
+              try {
+                await github.rest.pulls.dismissReview({
+                  owner, repo, pull_number,
+                  review_id: existing.id,
+                  message: 'Superseded by new architectural review'
+                });
+                core.info(`Dismissed previous arch review #${existing.id}`);
+              } catch (e) {
+                core.warning(`Could not dismiss previous review: ${e.message}`);
+              }
+            }
 
             // Build scores table
             const scores = review.scores || {};
@@ -402,13 +418,38 @@ jobs:
                 return `| ${ci} | ${c.name} | ${c.detail || ''} |`;
               }).join('\n');
 
-            // Build issues list
-            const issuesList = (review.issues || [])
-              .filter(i => i && i.length > 0)
-              .map(i => `- ${i}`)
-              .join('\n');
+            // Build inline comments from actions + issues (new object format)
+            // Handles both old string format and new {action/description, file, line} format
+            const inlineComments = [];
+            const bodyActions = [];
+            const bodyIssues = [];
 
-            let body = `## ${icon} 🏗️ Architectural Review: ${verdict}\n\n`;
+            for (const a of (review.actions || [])) {
+              if (typeof a === 'string') {
+                bodyActions.push(a);
+              } else if (a && a.action) {
+                if (a.file && a.line) {
+                  inlineComments.push({ path: a.file, line: Number(a.line), body: `🔧 **Action:** ${a.action}` });
+                } else {
+                  bodyActions.push(a.action);
+                }
+              }
+            }
+
+            for (const i of (review.issues || [])) {
+              if (typeof i === 'string') {
+                bodyIssues.push(i);
+              } else if (i && i.description) {
+                if (i.file && i.line) {
+                  inlineComments.push({ path: i.file, line: Number(i.line), body: `⚠️ **Issue:** ${i.description}` });
+                } else {
+                  bodyIssues.push(i.description);
+                }
+              }
+            }
+
+            // Build review body
+            let body = `${REVIEW_MARKER}\n## ${icon} 🏗️ Architectural Review: ${verdict}\n\n`;
             body += `Looked at ${sourceCount} source file${sourceCount === '1' ? '' : 's'}. `;
             body += `${review.summary || 'No issues found.'}\n\n`;
 
@@ -418,25 +459,27 @@ jobs:
             if (checksRows) {
               body += `### Details\n| | Check | What I found |\n|--|-------|-------------|\n${checksRows}\n\n`;
             }
+
+            const issuesList = bodyIssues.filter(i => i && i.length > 0).map(i => `- ${i}`).join('\n');
             if (issuesList) {
               body += `### Things to fix\n${issuesList}\n\n`;
             }
-            const archActions = (review.actions || [])
-              .filter(a => a && a.length > 0)
-              .map((a, i) => `${i + 1}. ${a}`)
-              .join('\n');
-            if (archActions) {
-              body += `### Recommended actions\n${archActions}\n\n`;
+            const actionsList = bodyActions.filter(a => a && a.length > 0).map((a, i) => `${i + 1}. ${a}`).join('\n');
+            if (actionsList) {
+              body += `### Recommended actions\n${actionsList}\n\n`;
             }
             if (review.notes) {
               body += `### Other thoughts\n${review.notes}\n`;
             }
+            if (inlineComments.length > 0) {
+              body += `\n---\n_${inlineComments.length} inline comment${inlineComments.length === 1 ? '' : 's'} posted on specific files._\n`;
+            }
 
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body
+            await github.rest.pulls.createReview({
+              owner, repo, pull_number,
+              event: verdict === 'PASS' ? 'COMMENT' : 'REQUEST_CHANGES',
+              body,
+              comments: inlineComments
             });
 
   # ─── Test Quality Review ────────────────────────────────
@@ -457,21 +500,11 @@ jobs:
             echo "skip_reason=No test files detected for test quality review" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create skip comment and check
+      - name: Report skip to step summary
         if: steps.action.outputs.action == 'skip'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const skipReason = '${{ steps.action.outputs.skip_reason }}';
-            
-            // Create explanatory skip comment (no GitHub check needed - job status shows skip)
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: "## ⏭️ Test Quality Review: Skipped\n\n" +
-                    "No test files changed in this PR. If you added source code without tests, that's worth a second look."
-            });
+        run: |
+          echo "## ⏭️ Test Quality Review: Skipped" >> $GITHUB_STEP_SUMMARY
+          echo "No test files changed in this PR. If you added source code without tests, that is worth a second look." >> $GITHUB_STEP_SUMMARY
 
       - name: Checkout repo
         if: steps.action.outputs.action == 'review'
@@ -548,12 +581,15 @@ jobs:
           FAIL: any dimension scores 0 OR average < 2.0
 
           ## Output format — JSON only, no markdown, no explanation outside the JSON
-          {"verdict":"PASS|FAIL","summary":"one sentence","checklist_verdict":"PASS|FAIL","expert_verdict":"PASS|FAIL","scores":{"helpers":N,"naming":N,"error_coverage":N,"edge_cases":N,"isolation":N,"assertions":N,"structure":N},"checks":[{"name":"string","status":"pass|fail|warning","detail":"string"}],"issues":["string"],"actions":["concrete task, e.g. Replace start_test_server() in api_integration.rs with FullTestServer::new()","Add error path test for /api/agents POST with missing name field"],"notes":"string"}
+          {"verdict":"PASS|FAIL","summary":"one sentence","checklist_verdict":"PASS|FAIL","expert_verdict":"PASS|FAIL","scores":{"helpers":N,"naming":N,"error_coverage":N,"edge_cases":N,"isolation":N,"assertions":N,"structure":N},"checks":[{"name":"string","status":"pass|fail|warning","detail":"string"}],"issues":[{"description":"string","file":"string (optional)","line":"N (optional)"}],"actions":[{"action":"concrete task, e.g. Replace start_test_server() in api_integration.rs with FullTestServer::new()","file":"string (optional)","line":"N (optional)"}],"notes":"string"}
 
-          ## actions field rules
-          - Each action is a single concrete task the PR author can act on immediately
-          - Start with a verb: Add, Replace, Remove, Rename, Refactor, Test, Fix
-          - Reference specific test files, functions, or patterns when possible
+          ## actions and issues field rules
+          - Each action is an object: {"action": "verb phrase", "file": "path/to/file.rs", "line": 42}
+          - Each issue is an object: {"description": "what is wrong", "file": "path/to/file.rs", "line": 42}
+          - "file" and "line" are optional but strongly preferred — include them when you can identify the exact location
+          - The "file" value must match a filename from the diff headers (=== filename ===)
+          - The "line" value must be a line number from the NEW side of the diff (+ lines)
+          - Start action text with a verb: Add, Replace, Remove, Rename, Refactor, Test, Fix
           - If verdict is PASS, actions should be empty or contain only minor suggestions
           - If verdict is FAIL, actions must list every required fix as a workable checklist
           TEST_PROMPT
@@ -670,7 +706,7 @@ jobs:
           fi
           echo "Test quality review passed"
 
-      - name: Create Test Quality Check
+      - name: Create Test Quality Review
         if: steps.action.outputs.action == 'review'
         uses: actions/github-script@v7
         with:
@@ -681,12 +717,35 @@ jobs:
               const raw = fs.readFileSync('/tmp/test_review_result.json', 'utf8');
               review = JSON.parse(raw);
             } catch (e) {
-              review = { verdict: 'PASS', summary: 'Parse error — defaulting to PASS', scores: {}, checks: [], issues: [], notes: '' };
+              review = { verdict: 'PASS', summary: 'Parse error — defaulting to PASS', scores: {}, checks: [], issues: [], actions: [], notes: '' };
             }
 
             const verdict = review.verdict || 'PASS';
             const icon = verdict === 'PASS' ? '✅' : '❌';
             const testCount = '${{ needs.classify.outputs.test_count }}';
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = context.issue.number;
+            const REVIEW_MARKER = '<!-- pi-daemon:test-review -->';
+
+            // Dismiss previous bot review for this type
+            const reviews = await github.rest.pulls.listReviews({ owner, repo, pull_number });
+            const existing = reviews.data.find(r =>
+              r.user.type === 'Bot' &&
+              r.body && r.body.includes(REVIEW_MARKER)
+            );
+            if (existing) {
+              try {
+                await github.rest.pulls.dismissReview({
+                  owner, repo, pull_number,
+                  review_id: existing.id,
+                  message: 'Superseded by new test quality review'
+                });
+                core.info(`Dismissed previous test review #${existing.id}`);
+              } catch (e) {
+                core.warning(`Could not dismiss previous review: ${e.message}`);
+              }
+            }
 
             // Build scores table
             const scores = review.scores || {};
@@ -704,13 +763,37 @@ jobs:
                 return `| ${ci} | ${c.name} | ${c.detail || ''} |`;
               }).join('\n');
 
-            // Build issues list
-            const issuesList = (review.issues || [])
-              .filter(i => i && i.length > 0)
-              .map(i => `- ${i}`)
-              .join('\n');
+            // Build inline comments from actions + issues (new object format)
+            const inlineComments = [];
+            const bodyActions = [];
+            const bodyIssues = [];
 
-            let body = `## ${icon} 🧪 Test Quality Review: ${verdict}\n\n`;
+            for (const a of (review.actions || [])) {
+              if (typeof a === 'string') {
+                bodyActions.push(a);
+              } else if (a && a.action) {
+                if (a.file && a.line) {
+                  inlineComments.push({ path: a.file, line: Number(a.line), body: `🔧 **Action:** ${a.action}` });
+                } else {
+                  bodyActions.push(a.action);
+                }
+              }
+            }
+
+            for (const i of (review.issues || [])) {
+              if (typeof i === 'string') {
+                bodyIssues.push(i);
+              } else if (i && i.description) {
+                if (i.file && i.line) {
+                  inlineComments.push({ path: i.file, line: Number(i.line), body: `⚠️ **Issue:** ${i.description}` });
+                } else {
+                  bodyIssues.push(i.description);
+                }
+              }
+            }
+
+            // Build review body
+            let body = `${REVIEW_MARKER}\n## ${icon} 🧪 Test Quality Review: ${verdict}\n\n`;
             body += `Reviewed ${testCount} test file${testCount === '1' ? '' : 's'}. `;
             body += `${review.summary || 'No issues found.'}\n\n`;
 
@@ -720,25 +803,27 @@ jobs:
             if (checksRows) {
               body += `### Details\n| | Check | What I found |\n|--|-------|-------------|\n${checksRows}\n\n`;
             }
+
+            const issuesList = bodyIssues.filter(i => i && i.length > 0).map(i => `- ${i}`).join('\n');
             if (issuesList) {
               body += `### Things to fix\n${issuesList}\n\n`;
             }
-            const testActions = (review.actions || [])
-              .filter(a => a && a.length > 0)
-              .map((a, i) => `${i + 1}. ${a}`)
-              .join('\n');
-            if (testActions) {
-              body += `### Recommended actions\n${testActions}\n\n`;
+            const actionsList = bodyActions.filter(a => a && a.length > 0).map((a, i) => `${i + 1}. ${a}`).join('\n');
+            if (actionsList) {
+              body += `### Recommended actions\n${actionsList}\n\n`;
             }
             if (review.notes) {
               body += `### Other thoughts\n${review.notes}\n`;
             }
+            if (inlineComments.length > 0) {
+              body += `\n---\n_${inlineComments.length} inline comment${inlineComments.length === 1 ? '' : 's'} posted on specific files._\n`;
+            }
 
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body
+            await github.rest.pulls.createReview({
+              owner, repo, pull_number,
+              event: verdict === 'PASS' ? 'COMMENT' : 'REQUEST_CHANGES',
+              body,
+              comments: inlineComments
             });
 
   # ─── Configuration Review ───────────────────────────────
@@ -759,21 +844,11 @@ jobs:
             echo "skip_reason=No configuration files detected for configuration review" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create skip comment and check
+      - name: Report skip to step summary
         if: steps.action.outputs.action == 'skip'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const skipReason = '${{ steps.action.outputs.skip_reason }}';
-            
-            // Create explanatory skip comment (no GitHub check needed - job status shows skip)
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: "## ⏭️ Configuration Review: Skipped\n\n" +
-                    "No config/docs files (.yml, .toml, .md) in this PR — pure code change."
-            });
+        run: |
+          echo "## ⏭️ Configuration Review: Skipped" >> $GITHUB_STEP_SUMMARY
+          echo "No config/docs files (.yml, .toml, .md) in this PR — pure code change." >> $GITHUB_STEP_SUMMARY
 
       - name: Checkout repo
         if: steps.action.outputs.action == 'review'
@@ -969,12 +1044,15 @@ jobs:
           FAIL: any dimension scores 0 OR average < 1.5
 
           ## Output format — JSON only, no markdown, no explanation outside the JSON
-          {"verdict":"PASS|FAIL","summary":"one sentence","checklist_verdict":"PASS|FAIL","expert_verdict":"PASS|FAIL","scores":{"structure":N,"naming":N,"security":N,"docs_quality":N,"maintainability":N},"checks":[{"name":"string","status":"pass|fail|warning","detail":"string"}],"issues":[{"severity":"error|warning|info","file":"string","description":"string"}],"actions":["concrete task, e.g. Rename job X to be more descriptive","Remove dead step Y in workflow Z"],"notes":"string"}
+          {"verdict":"PASS|FAIL","summary":"one sentence","checklist_verdict":"PASS|FAIL","expert_verdict":"PASS|FAIL","scores":{"structure":N,"naming":N,"security":N,"docs_quality":N,"maintainability":N},"checks":[{"name":"string","status":"pass|fail|warning","detail":"string"}],"issues":[{"severity":"error|warning|info","file":"string","line":"N (optional)","description":"string"}],"actions":[{"action":"concrete task, e.g. Rename job X to be more descriptive","file":"string (optional)","line":"N (optional)"}],"notes":"string"}
 
-          ## actions field rules
-          - Each action is a single concrete task the PR author can act on immediately
-          - Start with a verb: Add, Update, Remove, Fix, Rename, Simplify
-          - Reference specific files when possible
+          ## actions and issues field rules
+          - Each action is an object: {"action": "verb phrase", "file": "path/to/file.yml", "line": 42}
+          - Each issue is an object: {"severity": "error|warning|info", "file": "path/to/file.yml", "line": 42, "description": "what is wrong"}
+          - "file" and "line" are optional but strongly preferred — include them when you can identify the exact location
+          - The "file" value must match a filename from the diff headers (=== filename ===)
+          - The "line" value must be a line number from the NEW side of the diff (+ lines)
+          - Start action text with a verb: Add, Update, Remove, Fix, Rename, Simplify
           - If verdict is PASS, actions should be empty or contain only minor suggestions
           - If verdict is FAIL, actions must list every required fix as a workable checklist
           CONFIG_PROMPT
@@ -1088,7 +1166,7 @@ jobs:
           fi
           echo "Configuration review passed (mechanical ✅ + LLM ✅)"
 
-      - name: Create Configuration Check
+      - name: Create Configuration Review
         if: steps.action.outputs.action == 'review'
         uses: actions/github-script@v7
         with:
@@ -1099,12 +1177,35 @@ jobs:
               const raw = fs.readFileSync('/tmp/config_review_result.json', 'utf8');
               review = JSON.parse(raw);
             } catch (e) {
-              review = { verdict: 'PASS', summary: 'Parse error — defaulting to PASS', scores: {}, checks: [], issues: [], notes: '' };
+              review = { verdict: 'PASS', summary: 'Parse error — defaulting to PASS', scores: {}, checks: [], issues: [], actions: [], notes: '' };
             }
 
             const verdict = review.verdict || 'PASS';
             const icon = verdict === 'PASS' ? '✅' : '❌';
             const configCount = '${{ needs.classify.outputs.config_count }}';
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = context.issue.number;
+            const REVIEW_MARKER = '<!-- pi-daemon:config-review -->';
+
+            // Dismiss previous bot review for this type
+            const reviews = await github.rest.pulls.listReviews({ owner, repo, pull_number });
+            const existing = reviews.data.find(r =>
+              r.user.type === 'Bot' &&
+              r.body && r.body.includes(REVIEW_MARKER)
+            );
+            if (existing) {
+              try {
+                await github.rest.pulls.dismissReview({
+                  owner, repo, pull_number,
+                  review_id: existing.id,
+                  message: 'Superseded by new configuration review'
+                });
+                core.info(`Dismissed previous config review #${existing.id}`);
+              } catch (e) {
+                core.warning(`Could not dismiss previous review: ${e.message}`);
+              }
+            }
 
             // Build scores table
             const scores = review.scores || {};
@@ -1122,17 +1223,40 @@ jobs:
                 return `| ${ci} | ${c.name} | ${c.detail || ''} |`;
               }).join('\n');
 
-            // Build issues list
-            const issuesList = (review.issues || [])
-              .map(i => {
-                const sev = (i.severity === 'error') ? '🔴' : (i.severity === 'warning') ? '🟡' : 'ℹ️';
-                const file = i.file ? `\`${i.file}\`: ` : '';
-                return `- ${sev} ${file}${typeof i === 'string' ? i : i.description || ''}`;
-              })
-              .filter(i => i.length > 5)
-              .join('\n');
+            // Build inline comments from actions + issues (new object format)
+            const inlineComments = [];
+            const bodyActions = [];
+            const bodyIssues = [];
 
-            let body = `## ${icon} ⚙️ Configuration Review: ${verdict}\n\n`;
+            for (const a of (review.actions || [])) {
+              if (typeof a === 'string') {
+                bodyActions.push(a);
+              } else if (a && a.action) {
+                if (a.file && a.line) {
+                  inlineComments.push({ path: a.file, line: Number(a.line), body: `🔧 **Action:** ${a.action}` });
+                } else {
+                  bodyActions.push(a.action);
+                }
+              }
+            }
+
+            for (const i of (review.issues || [])) {
+              if (typeof i === 'string') {
+                bodyIssues.push(i);
+              } else if (i && i.description) {
+                if (i.file && i.line) {
+                  const sev = (i.severity === 'error') ? '🔴' : (i.severity === 'warning') ? '🟡' : '⚠️';
+                  inlineComments.push({ path: i.file, line: Number(i.line), body: `${sev} **Issue:** ${i.description}` });
+                } else {
+                  const sev = (i.severity === 'error') ? '🔴' : (i.severity === 'warning') ? '🟡' : 'ℹ️';
+                  const file = i.file ? `\`${i.file}\`: ` : '';
+                  bodyIssues.push(`${sev} ${file}${i.description || ''}`);
+                }
+              }
+            }
+
+            // Build review body
+            let body = `${REVIEW_MARKER}\n## ${icon} ⚙️ Configuration Review: ${verdict}\n\n`;
             body += `Checked ${configCount} config/docs file${configCount === '1' ? '' : 's'}. `;
             body += `${review.summary || 'No issues found.'}\n\n`;
 
@@ -1142,26 +1266,28 @@ jobs:
             if (checksRows) {
               body += `### Details\n| | Check | What I found |\n|--|-------|-------------|\n${checksRows}\n\n`;
             }
+
+            const issuesList = bodyIssues.filter(i => i && i.length > 5).map(i => `- ${i}`).join('\n');
             if (issuesList) {
               body += `### Things to fix\n${issuesList}\n\n`;
             }
-            const cfgActions = (review.actions || [])
-              .filter(a => a && typeof a === 'string' && a.length > 0)
-              .map((a, i) => `${i + 1}. ${a}`)
-              .join('\n');
-            if (cfgActions) {
-              body += `### Recommended actions\n${cfgActions}\n\n`;
+            const actionsList = bodyActions.filter(a => a && a.length > 0).map((a, i) => `${i + 1}. ${a}`).join('\n');
+            if (actionsList) {
+              body += `### Recommended actions\n${actionsList}\n\n`;
             }
             if (review.notes) {
               body += `### Other thoughts\n${review.notes}\n`;
             }
+            if (inlineComments.length > 0) {
+              body += `\n---\n_${inlineComments.length} inline comment${inlineComments.length === 1 ? '' : 's'} posted on specific files._\n`;
+            }
 
-            // Post detailed review as PR comment (job status provides pass/fail)
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body
+            // Post as native PR review (job status provides pass/fail)
+            await github.rest.pulls.createReview({
+              owner, repo, pull_number,
+              event: verdict === 'PASS' ? 'COMMENT' : 'REQUEST_CHANGES',
+              body,
+              comments: inlineComments
             });
 
   # ─── Code Review Gate ───────────────────────────────────
