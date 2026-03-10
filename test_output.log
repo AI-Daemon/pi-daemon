@@ -1,0 +1,335 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.17s
+     Running unittests src/lib.rs (target/debug/deps/pi_daemon_api-dcc5cc6ce389be13)
+
+running 34 tests
+test middleware::tests::test_auth_logic_bearer_token ... ok
+test middleware::tests::test_auth_logic_no_key_configured ... ok
+test middleware::tests::test_auth_logic_skip_paths ... ok
+test middleware::tests::test_auth_logic_wrong_key ... ok
+test middleware::tests::test_auth_logic_x_api_key ... ok
+test openai_compat::tests::test_chat_completion_request_deserialization ... ok
+test openai_compat::tests::test_chat_completion_response_serialization ... ok
+test openai_compat::tests::test_estimate_tokens ... ok
+test openai_compat::tests::test_extract_user_content_parts ... ok
+test openai_compat::tests::test_extract_user_content_text ... ok
+test openai_compat::tests::test_extract_user_content_empty ... ok
+test openai_compat::tests::test_infer_model_owner ... ok
+test openai_compat::tests::test_is_valid_model_name ... ok
+test openai_compat::tests::test_models_response_serialization ... ok
+test openai_compat::tests::test_streaming_chunk_serialization ... ok
+test routes::tests::test_health_check ... ok
+test webchat::tests::test_webchat_page_returns_html ... ok
+test routes::tests::test_get_agent_not_found ... ok
+test ws::tests::test_client_message_deserialization ... ok
+test ws::tests::test_connection_guard_removes_entry_at_zero ... ok
+test routes::tests::test_register_agent ... ok
+test server::tests::test_server_constants_are_reasonable ... ok
+test ws::tests::test_connection_guard_handles_missing_entry ... ok
+test webchat::tests::test_etag_contains_version ... ok
+test routes::tests::test_get_agent_invalid_id ... ok
+test ws::tests::test_connection_guard_decrements_on_drop ... ok
+test routes::tests::test_get_status ... ok
+test ws::tests::test_server_message_serialization ... ok
+test ws::tests::test_text_delta_buffer_empty ... ok
+test ws::tests::test_text_delta_buffer_char_threshold ... ok
+test ws::tests::test_connection_tracker_creation ... ok
+test server::tests::test_build_router_creates_state_and_router ... ok
+test webchat::tests::test_webchat_html_contains_required_elements ... ok
+test ws::tests::test_text_delta_buffer_time_threshold ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running tests/api_integration.rs (target/debug/deps/api_integration-6175187607a25b2f)
+
+running 10 tests
+test test_api_status_endpoint ... ok
+test test_double_delete_agent_is_idempotent ... ok
+test test_concurrent_agent_register_delete_consistency ... ok
+test test_health_response_time_under_threshold ... ok
+test test_agent_crud_lifecycle ... ok
+test test_heartbeat_nonexistent_agent_returns_404 ... ok
+test test_api_events_endpoint ... ok
+test test_invalid_agent_id_handling ... ok
+test test_api_health_endpoint ... ok
+test test_concurrent_http_requests_all_succeed ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running tests/openai_integration.rs (target/debug/deps/openai_integration-5b3ee5ee757f2e06)
+
+running 30 tests
+test test_models_endpoint_concurrent_access ... ok
+test test_model_resolution ... ok
+test test_message_content_extraction ... ok
+test test_empty_messages_error ... ok
+test test_models_endpoint_deduplicates ... ok
+test test_empty_content_string_accepted ... ok
+test test_models_endpoint_basic ... ok
+test test_error_response_has_type_field ... ok
+test test_malformed_request ... ok
+test test_models_endpoint_filters_invalid_model_names ... ok
+test test_models_endpoint_handles_very_long_model_names ... ok
+test test_models_endpoint_error_resilience ... ok
+test test_models_endpoint_http_methods ... ok
+test test_models_endpoint_includes_agent_models ... ok
+test test_models_endpoint_includes_default_model ... ok
+test test_models_endpoint_openai_spec_compliance ... ok
+test test_models_endpoint_with_configured_providers ... ok
+test test_models_endpoint_model_ownership_inference ... ok
+test test_models_endpoint_with_no_models ... ok
+test test_models_endpoint_with_special_characters ... ok
+test test_models_endpoint_load_performance ... ok
+test test_multipart_content ... ok
+test test_non_streaming_chat_completion ... ok
+test test_openai_client_compatibility ... ok
+test test_optional_parameters ... ok
+test test_token_counts_are_plausible ... ok
+test test_unicode_content_handling ... ok
+test test_unique_completion_ids ... ok
+test test_streaming_chunk_ids_are_consistent ... ok
+test test_streaming_chat_completion ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.80s
+
+     Running tests/webchat_integration.rs (target/debug/deps/webchat_integration-2a90d89237188b2c)
+
+running 8 tests
+test test_webchat_page_loads ... ok
+test test_webchat_has_security_relevant_structure ... ok
+test test_webchat_concurrent_loads ... ok
+test test_webchat_performance ... ok
+test test_webchat_etag_consistency ... ok
+test test_webchat_no_external_requests ... ok
+test test_webchat_content_length_is_substantial ... ok
+test test_webchat_static_asset_embedding ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/websocket_integration.rs (target/debug/deps/websocket_integration-bd66819e13f34fda)
+
+running 9 tests
+test test_websocket_auth_required ... ok
+test test_websocket_ping_pong ... ok
+test test_websocket_connection_limit ... ok
+test test_websocket_malformed_message ... ok
+test test_websocket_rapid_ping_flood ... ok
+test test_websocket_close_frame_is_clean ... ok
+test test_websocket_multiple_agents_independent ... ok
+test test_websocket_set_model ... ok
+test test_websocket_chat_message ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.58s
+
+     Running unittests src/lib.rs (target/debug/deps/pi_daemon_cli-f2504d012da50f71)
+
+running 2 tests
+test daemon::tests::test_daemonize_creates_child_process ... ok
+test daemon::tests::test_write_daemon_log ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/main.rs (target/debug/deps/pi_daemon-86e5a449d7e404bb)
+
+running 5 tests
+test daemon::tests::test_daemonize_creates_child_process ... ok
+test tests::test_format_duration ... ok
+test tests::test_version_is_valid_semver ... ok
+test tests::test_version_output ... ok
+test daemon::tests::test_write_daemon_log ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli_tests.rs (target/debug/deps/cli_tests-031bd3af53292078)
+
+running 12 tests
+test cli_help_message ... ok
+test cli_config_shows_redacted_secrets ... ok
+test cli_version ... ok
+test cli_chat_shows_help_options ... ok
+test cli_config_does_not_leak_real_keys ... ok
+test cli_start_shows_help_options ... ok
+test cli_version_format_is_semver ... ok
+test cli_invalid_command ... ok
+test cli_chat_when_not_running ... ok
+test cli_stop_when_not_running ... ok
+test cli_status_when_not_running ... ok
+test cli_all_subcommands_have_help ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running tests/daemon_tests.rs (target/debug/deps/daemon_tests-e73ad359094dc26b)
+
+running 7 tests
+test test_background_daemon_lifecycle ... ok
+test test_background_mode_messages ... ok
+test test_daemon_already_running_detection ... ok
+test test_daemon_log_file_creation ... ok
+test test_foreground_option_shows_correct_message ... ok
+test test_unix_daemonization_functions ... ok
+test test_foreground_vs_background_behavior ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.12s
+
+     Running unittests src/lib.rs (target/debug/deps/pi_daemon_kernel-5682ad8e162ad066)
+
+running 28 tests
+test event_bus::tests::test_publish_broadcast_event_subscriber_receives ... ok
+test event_bus::tests::test_history_stores_events_up_to_limit ... ok
+test event_bus::tests::test_history_limit ... ok
+test event_bus::tests::test_remove_agent_channel ... ok
+test kernel::tests::test_init_publishes_startup_event ... ok
+test config::tests::test_config_roundtrip ... ok
+test kernel::tests::test_register_agent_publishes_event ... ok
+test config::tests::test_config_toml_has_comments ... ok
+test kernel::tests::test_system_agent_id_is_nil_uuid ... ok
+test kernel::tests::test_unregister_agent_removes_from_registry_and_cleans_up ... ok
+test registry::tests::test_heartbeat_nonexistent_returns_error ... ok
+test kernel::tests::test_register_agent_returns_valid_id_and_appears_in_registry ... ok
+test registry::tests::test_find_by_name ... ok
+test config::tests::test_daemon_info_roundtrip ... ok
+test registry::tests::test_register_then_unregister ... ok
+test registry::tests::test_register_agent_appears_in_list ... ok
+test github::tests::test_list_repos_empty_token ... ok
+test registry::tests::test_set_status_changes_status ... ok
+test registry::tests::test_set_status_nonexistent_returns_error ... ok
+test registry::tests::test_unregister_nonexistent_returns_error ... ok
+test event_bus::tests::test_history_evicts_oldest_when_full ... ok
+test registry::tests::test_heartbeat_updates_timestamp ... ok
+test github::tests::test_verify_github_auth_empty_token ... ok
+test config::tests::test_environment_variable_overrides ... ok
+test config::tests::test_load_config_creates_default_when_missing ... ok
+test config::tests::test_default_urls_are_set ... ok
+test kernel::tests::test_uptime_secs_returns_non_negative ... ok
+test event_bus::tests::test_publish_targeted_event_only_target_receives ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/kernel_lifecycle.rs (target/debug/deps/kernel_lifecycle-b25ceb609a478884)
+
+running 7 tests
+test test_duplicate_name_creates_distinct_agents ... ok
+test test_all_agent_kinds_register_successfully ... ok
+test test_event_history_limit_respected ... ok
+test test_event_history_persistence ... ok
+test test_kernel_lifecycle_with_agent_and_events ... ok
+test test_unregister_nonexistent_agent_is_safe ... ok
+test test_multiple_agents_lifecycle ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/registry_concurrent.rs (target/debug/deps/registry_concurrent-efaefe7541614055)
+
+running 7 tests
+test test_registry_unregister_nonexistent_is_safe ... ok
+test test_registry_find_by_name_returns_none_for_missing ... ok
+test test_registry_count_linearizability ... ok
+test test_concurrent_agent_registration ... ok
+test test_concurrent_mixed_operations_consistency ... ok
+test test_concurrent_register_unregister ... ok
+test test_concurrent_agent_operations ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+
+     Running unittests src/lib.rs (target/debug/deps/pi_daemon_test_utils-a93a5e7138cb13a8)
+
+running 6 tests
+test tests::test_client_constructs_with_valid_url ... ok
+test tests::test_kernel_creates_isolated_environment ... ok
+test tests::test_server_binds_and_responds ... ok
+test tests::test_full_server_with_config ... ok
+test tests::test_full_server_ws_url ... ok
+test tests::test_full_server_boots_real_kernel ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/integration.rs (target/debug/deps/integration-4ff28bc670c65414)
+
+running 11 tests
+test test_kernel_isolation_and_cleanup ... ok
+test test_client_error_handling ... ok
+test test_json_assertion_macros ... ok
+test test_server_endpoints_respond_correctly ... ok
+test test_full_server_status_with_json_contains ... ok
+test test_full_server_agent_registration ... ok
+test test_multiple_concurrent_servers ... ok
+test test_client_concurrent_gets ... ok
+test test_client_post_raw ... ok
+test test_client_post_json_expect ... ok
+test test_full_server_health_endpoint ... ok
+
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running unittests src/lib.rs (target/debug/deps/pi_daemon_types-c65fa632b1db864b)
+
+running 32 tests
+test agent::tests::test_agent_id_display ... ok
+test agent::tests::test_agent_id_new_is_unique ... ok
+test agent::tests::test_agent_entry_serialization ... ok
+test agent::tests::test_agent_kind_serialization ... ok
+test agent::tests::test_agent_status_serialization ... ok
+test agent::tests::test_session_id_new_is_unique ... ok
+test config::tests::test_daemon_config_default_values ... ok
+test config::tests::test_daemon_info_serialization ... ok
+test config::tests::test_github_config_default ... ok
+test config::tests::test_providers_config_default ... ok
+test error::tests::test_daemon_error_display ... ok
+test error::tests::test_daemon_error_from_io_error ... ok
+test error::tests::test_daemon_error_from_serde_error ... ok
+test error::tests::test_daemon_result_alias ... ok
+test config::tests::test_daemon_config_serialization ... ok
+test error::tests::test_daemon_result_error ... ok
+test event::tests::test_event_id_new_is_unique ... ok
+test event::tests::test_event_new_sets_timestamp ... ok
+test event::tests::test_event_payload_agent_registered_serialization ... ok
+test event::tests::test_event_payload_tool_completed_serialization ... ok
+test event::tests::test_event_serialization ... ok
+test event::tests::test_event_target_agent_serialization ... ok
+test event::tests::test_event_target_broadcast_serialization ... ok
+test message::tests::test_content_block_text_serialization ... ok
+test message::tests::test_content_block_tool_use_serialization ... ok
+test message::tests::test_message_content_blocks_untagged ... ok
+test message::tests::test_message_content_text_untagged ... ok
+test message::tests::test_message_serialization ... ok
+test message::tests::test_role_serialization ... ok
+test message::tests::test_stop_reason_serialization ... ok
+test message::tests::test_token_usage_default ... ok
+test message::tests::test_token_usage_serialization ... ok
+
+test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests pi_daemon_api
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests pi_daemon_cli
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests pi_daemon_kernel
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests pi_daemon_test_utils
+
+running 6 tests
+test crates/pi-daemon-test-utils/src/client.rs - client::TestClient (line 7) ... ignored
+test crates/pi-daemon-test-utils/src/macros.rs - macros::assert_events_contain (line 176) ... ignored
+test crates/pi-daemon-test-utils/src/macros.rs - macros::assert_header (line 46) ... ignored
+test crates/pi-daemon-test-utils/src/macros.rs - macros::assert_json_contains (line 75) ... ignored
+test crates/pi-daemon-test-utils/src/macros.rs - macros::assert_openai_completion (line 116) ... ignored
+test crates/pi-daemon-test-utils/src/server.rs - server::FullTestServer (line 69) ... ignored
+
+test result: ok. 0 passed; 0 failed; 6 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests pi_daemon_types
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

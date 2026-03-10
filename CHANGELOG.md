@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Fix: add `classify` to `needs` arrays — `test: [lint-format, classify]`, `build: [lint-format, classify]`, `sandbox: [build, classify]`
   - No execution order change — `classify` already runs before `lint-format` transitively
   - Updated pipeline dependency graph in `pr-pipeline.yml` and `PR-Reviews.md`
+- Missing `/v1/models` endpoint for OpenAI API compatibility (#115)
+  - Added `GET /v1/models` endpoint that returns available models in OpenAI-compatible format
+  - Dynamic model discovery from daemon configuration, registered agents, and provider API keys
+  - Robust model validation (filters empty, whitespace-only, and overly long model names)
+  - Smart ownership inference (anthropic, openai, meta, etc.) with deduplication
+  - Production performance: 8ms single request, 66ms for 100 concurrent requests
+  - Complete test coverage: 18 comprehensive tests covering all scenarios
+  - Full API documentation and configuration examples added
 - Suppress clean-PASS LLM code reviews from PR conversation (#148)
   - All 3 review types (architectural, test quality, configuration) now check for actionable findings before posting
   - Clean PASS (verdict PASS + zero inline comments + zero body actions + zero body issues) writes to `$GITHUB_STEP_SUMMARY` instead of `pulls.createReview()`

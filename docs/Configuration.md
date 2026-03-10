@@ -42,6 +42,9 @@ openrouter_api_key = ""
 # Ollama (local)
 ollama_base_url = "http://localhost:11434"
 
+# Note: Configured provider API keys enable the /v1/models endpoint
+# to include well-known models from those providers automatically.
+
 [github]
 # Personal Access Token — needed for private repo access
 # Scopes: repo, read:org
