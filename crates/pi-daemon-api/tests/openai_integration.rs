@@ -946,13 +946,9 @@ async fn test_models_endpoint_with_no_models() {
     let body: serde_json::Value = response.json().await.unwrap();
     assert_eq!(body["object"], "list");
 
-    let models = body["data"].as_array().unwrap();
-    // Should return empty list if truly no models are available
-    // (Always succeeds since len() >= 0 is always true, but documents the expectation)
-    assert!(
-        models.len() == 0 || !models.is_empty(),
-        "Should handle zero models gracefully"
-    );
+    let _models = body["data"].as_array().unwrap();
+    // Should return a valid array, even if empty when no models are available
+    // If we got here without panicking, the test passes - endpoint handled empty config gracefully
 }
 
 #[tokio::test]
