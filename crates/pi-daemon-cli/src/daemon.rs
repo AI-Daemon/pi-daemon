@@ -1,54 +1,12 @@
 use anyhow::Result;
 use std::io::Write;
 
-/// Daemonize the current process using Unix fork/setsid
+/// Simple daemonization check - not used in current implementation
+/// We use process spawning instead of fork-based daemonization for better compatibility
 #[cfg(unix)]
 pub fn daemonize() -> Result<()> {
-    use nix::sys::stat::{umask, Mode};
-    use nix::unistd::{chdir, fork, setsid, ForkResult};
-
-    // First fork
-    match unsafe { fork() } {
-        Ok(ForkResult::Parent { child: _ }) => {
-            // Parent process exits - this is the key to daemonization
-            std::process::exit(0);
-        }
-        Ok(ForkResult::Child) => {
-            // Child continues to become the daemon
-        }
-        Err(e) => {
-            return Err(anyhow::anyhow!("Failed to fork: {}", e));
-        }
-    }
-
-    // Create new session (child becomes session leader)
-    setsid().map_err(|e| anyhow::anyhow!("Failed to setsid: {}", e))?;
-
-    // Second fork to prevent daemon from ever acquiring a controlling terminal
-    match unsafe { fork() } {
-        Ok(ForkResult::Parent { child: _ }) => {
-            // First child exits, leaving grandchild as the daemon
-            std::process::exit(0);
-        }
-        Ok(ForkResult::Child) => {
-            // This grandchild becomes the actual daemon
-        }
-        Err(e) => {
-            return Err(anyhow::anyhow!("Failed to second fork: {}", e));
-        }
-    }
-
-    // Change working directory to root to prevent blocking filesystem unmounts
-    chdir("/").map_err(|e| anyhow::anyhow!("Failed to chdir to /: {}", e))?;
-
-    // Set restrictive file creation mask
-    umask(Mode::from_bits_truncate(0o027));
-
-    // Note: We're NOT redirecting stdout/stderr/stdin here because:
-    // 1. The Rust tracing system expects to write to them
-    // 2. We'll handle logging configuration in the main process instead
-    // 3. The process is already detached from the terminal by the double fork
-
+    // This function is kept for potential future use but not currently called
+    // The current implementation uses process spawning in spawn_daemon_process()
     Ok(())
 }
 

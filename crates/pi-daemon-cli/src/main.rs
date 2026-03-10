@@ -219,18 +219,8 @@ fn spawn_daemon_process(listen_addr: &str) -> anyhow::Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 
-    // On Unix, use process groups to detach from terminal
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        unsafe {
-            cmd.pre_exec(|| {
-                // Create new session to detach from terminal
-                libc::setsid();
-                Ok(())
-            });
-        }
-    }
+    // Process spawning with detached stdio is sufficient for backgrounding
+    // The subprocess will naturally be detached from the parent terminal
 
     let child = cmd
         .spawn()
