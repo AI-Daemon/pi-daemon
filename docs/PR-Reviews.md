@@ -135,13 +135,16 @@ The PR Pipeline (`pr-pipeline.yml`) is the sole orchestrator for all PR checks. 
 
 **Pipeline dependency graph:**
 ```
-scope-gate ──→ classify ──→ lint-format ──┬──→ test ──────────→ code-review (LLM reviews)
-                       │                  │
-                       │                  └──→ build ─────────→ sandbox (integration)
-                       │
-                       ├──→ security (parallel with lint)
-                       │
-                       └──→ hygiene (parallel with lint)
+scope-gate ──→ classify ──→ lint-format ──┬──→ test ──────────→ code-review ──┐
+                       │                  │                                    │
+                       │                  └──→ build ─────────→ sandbox ──────┤
+                       │                                                      │
+                       ├──→ security (parallel with lint) ────────────────────┤
+                       │                                                      │
+                       └──→ hygiene (parallel with lint) ─────────────────────┤
+                                                                              │
+                                                              update-dashboard ◄┘
+                                                              (if: always, needs: ALL)
 ```
 
 **Key ordering guarantees:**
@@ -483,6 +486,70 @@ Security and hygiene findings are posted as **workflow command annotations** (`:
 
 ---
 
+## 🎯 PR Status Dashboard (#142)
+
+After Phases 1–3 eliminated PR comment spam by moving output to native GitHub surfaces (reviews, statuses, annotations), the dashboard provides a **single auto-updating PR comment** that aggregates all pipeline results into one place.
+
+### Architecture
+
+The `update-dashboard` job runs in `pr-pipeline.yml` with `if: always()` after all other stages complete. It reads results from four data sources:
+
+| Source | API | What it reads |
+|--------|-----|---------------|
+| Job results | `needs.*.result` | success / failure / skipped / cancelled for each stage |
+| Metrics | `repos.listCommitStatusesForRef()` | Coverage %, binary size from commit statuses |
+| Code reviews | `pulls.listReviews()` | Arch / test / config review verdicts |
+| Annotations | `checks.listForRef()` | Annotation counts from security/hygiene checks |
+
+### Dashboard Comment Format
+
+A single markdown table keyed by `<!-- pi-daemon-dashboard -->`:
+
+```markdown
+## 🎯 PR Status Dashboard
+
+| Stage | Status | Detail |
+|-------|--------|--------|
+| 🔬 Scope Gate | ✅ success | details |
+| 📂 Classification | ✅ success | rust, docs, workflows |
+| 🧹 Lint & Format | ✅ success | success |
+| 🧪 Tests | ❌ failure | 72.3% overall (kernel: 81.2%, api: 65.1%) |
+| 🏗️ Build | ✅ success | 12.4MB (13,003,776 bytes) |
+| 🔒 Security | ✅ success | clean |
+| 🧹 Hygiene | ✅ success | success |
+| 🤖 Code Review | ✅ success | Arch: PASS, Test: FAIL, Config: PASS |
+| 🏖️ Sandbox | ⏭️ skipped | skipped |
+
+**Blocking:** 🧪 Tests
+**Last updated:** 2026-03-10T14:30:00Z · Run [#1234](link)
+```
+
+### Upsert Logic
+
+On first push, creates a new comment. On subsequent pushes, finds the existing comment by its `<!-- pi-daemon-dashboard -->` marker and updates it in place. This is the **only** `createComment` call in the pipeline (aside from scope gate, which maintains its own upsert comment).
+
+### Scope Gate Interaction
+
+The scope gate (`_scope-gate.yml`) maintains its own upsert comment for BLOCK/WARN verdicts. The dashboard does **not** duplicate this — it shows a one-line summary row and links to the scope gate comment for details.
+
+### Check Gate Interaction
+
+The `update-dashboard` job is excluded from the Check Gate's (`auto-approve.yml`) check count via the `SELF_NAMES` list: `['Check Gate', 'Update Dashboard']`. The dashboard always exits 0 and is purely informational — it should never block approval or create a chicken-and-egg dependency.
+
+### Error Handling
+
+The entire dashboard script is wrapped in a try/catch. Any error emits a `core.warning()` and exits 0. The dashboard is a convenience — it must never block the pipeline.
+
+### Human Experience
+
+One comment at the bottom of the PR conversation shows everything: which stages passed, which failed, metric values, review verdicts, and a link to the Actions run. Auto-updates on each push.
+
+### Agent Experience
+
+Agents can read the single dashboard comment (find by `<!-- pi-daemon-dashboard -->` marker) for a quick summary, or continue using native APIs (reviews, statuses, check runs) for structured data.
+
+---
+
 ## Branch Protection & Check Gate
 
 The `main` branch is protected with the following rules:
@@ -501,7 +568,7 @@ The Check Gate is a **dynamic auto-approve system** that discovers and tracks al
 
 1. When the "PR Pipeline" workflow completes (`workflow_run` event), the Gate fires
 2. It fetches **all** check runs for the PR head SHA using the paginated Checks API
-3. It self-excludes its own `Check Gate` check run to prevent loops
+3. It self-excludes `Check Gate` and `Update Dashboard` check runs (informational jobs that shouldn't affect approval)
 4. It classifies every check: pass, fail, skip, running, pending, cancelled
 5. **Decision:**
    - Any still running/pending → wait (exit, will re-trigger on next workflow completion)
