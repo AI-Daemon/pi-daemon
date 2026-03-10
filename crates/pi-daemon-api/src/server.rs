@@ -1,4 +1,5 @@
 use crate::openai_compat;
+use crate::pi_routes;
 use crate::routes;
 use crate::state::AppState;
 use crate::webchat;
@@ -50,6 +51,13 @@ pub fn build_router(kernel: Arc<PiDaemonKernel>, config: DaemonConfig) -> (Route
         .route("/api/health", axum::routing::get(routes::health_check))
         .route("/api/shutdown", axum::routing::post(routes::shutdown))
         .route("/ws/{agent_id}", axum::routing::get(ws::ws_upgrade))
+        .route("/api/pi/status", axum::routing::get(pi_routes::pi_status))
+        .route("/api/pi/start", axum::routing::post(pi_routes::pi_start))
+        .route("/api/pi/stop", axum::routing::post(pi_routes::pi_stop))
+        .route(
+            "/api/pi/restart",
+            axum::routing::post(pi_routes::pi_restart),
+        )
         .route("/v1/models", axum::routing::get(openai_compat::models))
         .route(
             "/v1/chat/completions",
@@ -87,9 +95,18 @@ pub fn build_router(kernel: Arc<PiDaemonKernel>, config: DaemonConfig) -> (Route
 }
 
 /// Run the daemon server.
-pub async fn run_daemon(kernel: Arc<PiDaemonKernel>, config: DaemonConfig) -> anyhow::Result<()> {
+pub async fn run_daemon(
+    kernel: Arc<PiDaemonKernel>,
+    config: DaemonConfig,
+    pi_manager: Option<Arc<pi_daemon_pi_manager::PiManager>>,
+) -> anyhow::Result<()> {
     let addr: SocketAddr = config.listen_addr.parse()?;
     let (router, state) = build_router(kernel, config);
+
+    // Inject the Pi manager into shared state so API routes can access it
+    if let Some(pm) = pi_manager {
+        state.set_pi_manager(pm).await;
+    }
 
     info!("pi-daemon listening on http://{addr}");
 

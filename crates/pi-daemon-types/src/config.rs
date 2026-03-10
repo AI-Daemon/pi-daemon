@@ -24,6 +24,9 @@ pub struct DaemonConfig {
 
     /// GitHub configuration.
     pub github: GitHubConfig,
+
+    /// Managed Pi agent configuration.
+    pub pi: PiManagerConfig,
 }
 
 impl Default for DaemonConfig {
@@ -39,6 +42,52 @@ impl Default for DaemonConfig {
             data_dir,
             providers: ProvidersConfig::default(),
             github: GitHubConfig::default(),
+            pi: PiManagerConfig::default(),
+        }
+    }
+}
+
+/// Configuration for managed Pi processes (the `[pi]` section).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PiManagerConfig {
+    /// Path to the pi binary. Empty string means auto-discover on `$PATH`.
+    pub binary_path: String,
+
+    /// Minimum Pi version required (semver, e.g., "0.56.0").
+    pub min_version: String,
+
+    /// Automatically install Pi via npm if not found on PATH.
+    pub auto_install: bool,
+
+    /// Spawn a managed Pi agent when the daemon starts.
+    pub auto_start: bool,
+
+    /// Number of managed Pi instances to spawn.
+    /// Currently only 1 is supported; the field exists for future use.
+    pub pool_size: u32,
+
+    /// Working directory for the managed Pi agent.
+    pub working_directory: String,
+
+    /// Extensions to pre-load on managed Pi instances.
+    pub managed_extensions: Vec<String>,
+
+    /// Additional flags passed to the spawned Pi process.
+    pub extra_flags: Vec<String>,
+}
+
+impl Default for PiManagerConfig {
+    fn default() -> Self {
+        Self {
+            binary_path: String::new(),
+            min_version: "0.56.0".to_string(),
+            auto_install: true,
+            auto_start: true,
+            pool_size: 1,
+            working_directory: "~".to_string(),
+            managed_extensions: vec!["pi-daemon-bridge".to_string()],
+            extra_flags: Vec::new(),
         }
     }
 }

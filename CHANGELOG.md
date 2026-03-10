@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Bundled Pi: managed Pi process lifecycle (#158)
+  - New `pi-daemon-pi-manager` crate with discovery, installer, spawner, and health monitor
+  - `pi-daemon start` auto-discovers Pi on `$PATH`, spawns it as a managed child process with bridge extension injected
+  - `PI_DAEMON_URL` and all provider API keys inherited from daemon config — zero manual configuration
+  - Health monitor detects crashes and auto-restarts with exponential backoff (1s → 30s cap)
+  - `pi-daemon setup` interactive wizard: installs Pi via npm, collects API keys, writes config
+  - `pi-daemon config` now shows `[pi]` section
+  - `[pi]` config section in `config.toml`: `binary_path`, `min_version`, `auto_install`, `auto_start`, `pool_size`, `working_directory`, `managed_extensions`, `extra_flags`
+  - API endpoints: `GET /api/pi/status`, `POST /api/pi/start`, `POST /api/pi/stop`, `POST /api/pi/restart`
+  - Graceful degradation: daemon runs without Pi if not installed (warns in logs)
+  - Backward compatible: standalone Pi + manual bridge workflow unaffected
+
 ### Fixed
 - Fix sandbox broken pipe error and add dynamic step summary (#153)
   - Replace `echo "$CONTENT" | grep -q` and `echo "$CONTENT" | wc -c` with here-strings in webchat step to avoid SIGPIPE on large (~128KB) output

@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 pi-daemon-types = { path = "../pi-daemon-types" }
 pi-daemon-kernel = { path = "../pi-daemon-kernel" }
+pi-daemon-pi-manager = { path = "../pi-daemon-pi-manager" }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }

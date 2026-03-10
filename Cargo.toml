@@ -7,6 +7,7 @@ members = [
     "crates/pi-daemon-api",
     "crates/pi-daemon-cli",
     "crates/pi-daemon-test-utils", # Added for CI foundation
+    "crates/pi-daemon-pi-manager",
 ]
 
 [workspace.package]
@@ -70,6 +71,7 @@ futures = "0.3"
 
 # Misc
 dirs = "6"
+tokio-util = { version = "0.7", features = ["rt"] }
 serial_test = "3"
 sha2 = "0.10"
 rand = "0.8"

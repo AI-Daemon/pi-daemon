@@ -2,8 +2,9 @@ pub mod daemon;
 
 use clap::{Parser, Subcommand};
 use pi_daemon_kernel::config::{
-    config_path, load_config, read_daemon_info, remove_daemon_info, write_daemon_info,
+    config_path, load_config, read_daemon_info, remove_daemon_info, save_config, write_daemon_info,
 };
+use pi_daemon_pi_manager::PiManager;
 use pi_daemon_types::config::DaemonInfo;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -44,6 +45,8 @@ enum Commands {
     Version,
     /// Show configuration (secrets redacted)
     Config,
+    /// First-run setup wizard — install Pi, configure API keys
+    Setup,
 }
 
 #[tokio::main]
@@ -60,6 +63,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Commands::Config => cmd_config().await,
+        Commands::Setup => cmd_setup().await,
     }
 }
 
@@ -186,19 +190,49 @@ async fn cmd_start(foreground: bool, listen_override: Option<String>) -> anyhow:
         "pi-daemon starting"
     );
 
+    // Start managed Pi agent (if configured)
+    let pi_manager = Arc::new(PiManager::new(
+        config.clone(),
+        config.pi.clone(),
+        kernel.clone(),
+    ));
+
+    let pi_manager_for_shutdown = pi_manager.clone();
+    match pi_manager.start().await {
+        Ok(true) => {
+            if foreground {
+                let status = pi_manager.status().await;
+                tracing::info!(
+                    pid = ?status.pid,
+                    version = ?status.version,
+                    "Managed Pi agent started"
+                );
+            }
+        }
+        Ok(false) => {
+            tracing::warn!("Daemon running without managed Pi agent (degraded mode)");
+        }
+        Err(e) => {
+            tracing::warn!("Failed to start managed Pi: {e} (continuing without Pi)");
+        }
+    }
+
     // Handle Ctrl+C (mainly for foreground mode, daemon mode won't receive this)
     tokio::spawn(async move {
         tokio::signal::ctrl_c().await.ok();
         tracing::info!("Received Ctrl+C, shutting down...");
+        // Stop managed Pi before exiting
+        let _ = pi_manager_for_shutdown.stop().await;
         let _ = daemon::write_daemon_log("pi-daemon stopped via Ctrl+C");
         remove_daemon_info();
         std::process::exit(0);
     });
 
     // Run the API server (blocks until shutdown)
-    pi_daemon_api::server::run_daemon(kernel, config).await?;
+    pi_daemon_api::server::run_daemon(kernel, config, Some(pi_manager.clone())).await?;
 
-    // Cleanup
+    // Cleanup — stop managed Pi
+    let _ = pi_manager.stop().await;
     let _ = daemon::write_daemon_log("pi-daemon stopped normally");
     remove_daemon_info();
     Ok(())
@@ -545,6 +579,172 @@ async fn cmd_config() -> anyhow::Result<()> {
             &config.github.default_owner
         }
     );
+    println!();
+    println!("  [pi]");
+    println!(
+        "  binary_path:     {}",
+        if config.pi.binary_path.is_empty() {
+            "(auto-discover)"
+        } else {
+            &config.pi.binary_path
+        }
+    );
+    println!("  min_version:     {}", config.pi.min_version);
+    println!("  auto_install:    {}", config.pi.auto_install);
+    println!("  auto_start:      {}", config.pi.auto_start);
+    println!("  pool_size:       {}", config.pi.pool_size);
+    println!("  working_dir:     {}", config.pi.working_directory);
+
+    Ok(())
+}
+
+async fn cmd_setup() -> anyhow::Result<()> {
+    use std::io::{self, Write};
+
+    println!();
+    println!("  🔧 pi-daemon first-run setup");
+    println!();
+
+    let mut config = load_config()?;
+
+    // Step 1: Check Node.js
+    print!("  Checking for Node.js... ");
+    io::stdout().flush()?;
+    match pi_daemon_pi_manager::installer::check_node().await {
+        Ok(version) => println!("✅ {version}"),
+        Err(e) => {
+            println!("❌ not found");
+            println!();
+            println!("  Node.js is required to run Pi.");
+            println!("  Install it from: https://nodejs.org/ (v18 or later)");
+            println!("  Or: curl -fsSL https://fnm.vercel.app/install | bash && fnm use --install-if-missing 22");
+            println!();
+            return Err(anyhow::anyhow!("Node.js not found: {e}"));
+        }
+    }
+
+    // Step 2: Check Pi
+    print!("  Checking for Pi... ");
+    io::stdout().flush()?;
+    let pi_config = config.pi.clone();
+    match pi_daemon_pi_manager::discovery::discover_pi(&pi_config).await {
+        Ok(discovery) => {
+            println!("✅ v{} at {}", discovery.version, discovery.path.display());
+        }
+        Err(_) => {
+            println!("not found.");
+            println!("  Installing Pi (npm install -g @mariozechner/pi-coding-agent)...");
+            match pi_daemon_pi_manager::installer::install_pi().await {
+                Ok(()) => {
+                    // Re-check
+                    match pi_daemon_pi_manager::discovery::discover_pi(&pi_config).await {
+                        Ok(discovery) => {
+                            println!(
+                                "  ✅ Pi v{} installed at {}",
+                                discovery.version,
+                                discovery.path.display()
+                            );
+                        }
+                        Err(e) => {
+                            println!("  ⚠️  Pi installed but not found on PATH: {e}");
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("  ❌ Installation failed: {e}");
+                    println!(
+                        "  You can install manually: npm install -g @mariozechner/pi-coding-agent"
+                    );
+                }
+            }
+        }
+    }
+    println!();
+
+    // Step 3: API Keys
+    println!("  API Keys (stored in {})", config_path().display());
+    println!();
+
+    // Anthropic
+    let current_anthropic = if config.providers.anthropic_api_key.is_empty() {
+        "(not set)".to_string()
+    } else {
+        format!(
+            "{}...{}",
+            &config.providers.anthropic_api_key[..7.min(config.providers.anthropic_api_key.len())],
+            &config.providers.anthropic_api_key
+                [config.providers.anthropic_api_key.len().saturating_sub(4)..]
+        )
+    };
+    print!("  Anthropic API key [{current_anthropic}]: ");
+    io::stdout().flush()?;
+    let anthropic_input = read_line_sync()?;
+    if !anthropic_input.is_empty() {
+        config.providers.anthropic_api_key = anthropic_input;
+        println!("    ✅ Set");
+    } else {
+        println!("    (unchanged)");
+    }
+
+    // OpenAI
+    let current_openai = if config.providers.openai_api_key.is_empty() {
+        "(not set)".to_string()
+    } else {
+        format!(
+            "{}...{}",
+            &config.providers.openai_api_key[..7.min(config.providers.openai_api_key.len())],
+            &config.providers.openai_api_key
+                [config.providers.openai_api_key.len().saturating_sub(4)..]
+        )
+    };
+    print!("  OpenAI API key [{current_openai}] (Enter to skip): ");
+    io::stdout().flush()?;
+    let openai_input = read_line_sync()?;
+    if !openai_input.is_empty() {
+        config.providers.openai_api_key = openai_input;
+        println!("    ✅ Set");
+    } else {
+        println!("    (skipped)");
+    }
+
+    // GitHub PAT
+    let current_gh = if config.github.personal_access_token.is_empty() {
+        "(not set)".to_string()
+    } else {
+        format!(
+            "{}...{}",
+            &config.github.personal_access_token
+                [..7.min(config.github.personal_access_token.len())],
+            &config.github.personal_access_token
+                [config.github.personal_access_token.len().saturating_sub(4)..]
+        )
+    };
+    print!("  GitHub PAT [{current_gh}] (Enter to skip): ");
+    io::stdout().flush()?;
+    let gh_input = read_line_sync()?;
+    if !gh_input.is_empty() {
+        config.github.personal_access_token = gh_input;
+        println!("    ✅ Set");
+    }
+    println!();
+
+    // Step 4: Default model
+    print!("  Default model [{}]: ", config.default_model);
+    io::stdout().flush()?;
+    let model_input = read_line_sync()?;
+    if !model_input.is_empty() {
+        config.default_model = model_input;
+    }
+    println!();
+
+    // Save config
+    save_config(&config)?;
+
+    println!("  ✅ Setup complete!");
+    println!("  Config saved to: {}", config_path().display());
+    println!();
+    println!("  Run: pi-daemon start");
+    println!();
 
     Ok(())
 }
@@ -558,6 +758,13 @@ fn print_chat_help() {
     println!("  Ctrl+C   - Exit chat");
     println!();
     println!("Just type a message and press Enter to chat!");
+}
+
+/// Read a line from stdin synchronously, returning the trimmed string.
+fn read_line_sync() -> anyhow::Result<String> {
+    let mut buf = String::new();
+    std::io::stdin().read_line(&mut buf)?;
+    Ok(buf.trim().to_string())
 }
 
 fn flush_stdout() {

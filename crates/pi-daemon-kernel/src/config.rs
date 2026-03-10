@@ -170,8 +170,26 @@ fn create_config_toml(config: &DaemonConfig) -> DaemonResult<String> {
         config.github.api_base_url
     ));
     toml.push_str(&format!(
-        "default_owner = \"{}\"\n",
+        "default_owner = \"{}\"\n\n",
         config.github.default_owner
+    ));
+
+    toml.push_str("[pi]\n");
+    toml.push_str("# Managed Pi agent configuration\n");
+    toml.push_str("# Path to the pi binary (empty = auto-discover on $PATH)\n");
+    toml.push_str(&format!("binary_path = \"{}\"\n", config.pi.binary_path));
+    toml.push_str("# Minimum Pi version required\n");
+    toml.push_str(&format!("min_version = \"{}\"\n", config.pi.min_version));
+    toml.push_str("# Auto-install Pi via npm if not found\n");
+    toml.push_str(&format!("auto_install = {}\n", config.pi.auto_install));
+    toml.push_str("# Spawn a managed Pi agent on daemon start\n");
+    toml.push_str(&format!("auto_start = {}\n", config.pi.auto_start));
+    toml.push_str("# Number of managed Pi instances\n");
+    toml.push_str(&format!("pool_size = {}\n", config.pi.pool_size));
+    toml.push_str("# Working directory for managed Pi\n");
+    toml.push_str(&format!(
+        "working_directory = \"{}\"\n",
+        config.pi.working_directory
     ));
 
     Ok(toml)

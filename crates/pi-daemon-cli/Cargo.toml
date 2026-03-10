@@ -17,6 +17,7 @@ path = "src/lib.rs"
 pi-daemon-kernel = { path = "../pi-daemon-kernel" }
 pi-daemon-api = { path = "../pi-daemon-api" }
 pi-daemon-types = { path = "../pi-daemon-types" }
+pi-daemon-pi-manager = { path = "../pi-daemon-pi-manager" }
 tokio = { workspace = true }
 tokio-tungstenite = { workspace = true }
 futures = { workspace = true }

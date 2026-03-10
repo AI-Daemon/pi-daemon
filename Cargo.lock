@@ -1173,6 +1173,7 @@ dependencies = [
  "dashmap",
  "futures",
  "pi-daemon-kernel",
+ "pi-daemon-pi-manager",
  "pi-daemon-test-utils",
  "pi-daemon-types",
  "reqwest",
@@ -1198,6 +1199,7 @@ dependencies = [
  "futures",
  "pi-daemon-api",
  "pi-daemon-kernel",
+ "pi-daemon-pi-manager",
  "pi-daemon-types",
  "predicates",
  "reqwest",
@@ -1228,6 +1230,23 @@ dependencies = [
  "toml",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "pi-daemon-pi-manager"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dirs",
+ "pi-daemon-kernel",
+ "pi-daemon-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
 ]
 
 [[package]]
@@ -2047,6 +2066,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]
