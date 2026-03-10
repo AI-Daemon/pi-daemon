@@ -51,6 +51,10 @@ pub fn build_router(kernel: Arc<PiDaemonKernel>, config: DaemonConfig) -> (Route
         .route("/api/shutdown", axum::routing::post(routes::shutdown))
         .route("/ws/{agent_id}", axum::routing::get(ws::ws_upgrade))
         .route(
+            "/v1/models",
+            axum::routing::get(openai_compat::models),
+        )
+        .route(
             "/v1/chat/completions",
             axum::routing::post(openai_compat::chat_completions),
         );

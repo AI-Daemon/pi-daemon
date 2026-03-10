@@ -478,3 +478,195 @@ async fn test_streaming_chunk_ids_are_consistent() {
         );
     }
 }
+
+#[tokio::test]
+async fn test_models_endpoint_basic() {
+    let server = FullTestServer::new().await;
+    let client = server.client();
+
+    let response = client.get("/v1/models").await;
+    assert_eq!(response.status(), 200);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "application/json"
+    );
+
+    let body: serde_json::Value = response.json().await.unwrap();
+
+    // Verify OpenAI models list schema
+    assert_eq!(body["object"], "list");
+    assert!(body["data"].is_array());
+
+    let models = body["data"].as_array().unwrap();
+    assert!(!models.is_empty(), "Should return at least one model");
+
+    // Verify each model follows OpenAI schema
+    for model in models {
+        assert!(model["id"].is_string(), "Model should have string id");
+        assert_eq!(model["object"], "model");
+        assert!(model["created"].is_number(), "Should have created timestamp");
+        assert!(model["owned_by"].is_string(), "Should have owned_by");
+
+        let model_id = model["id"].as_str().unwrap();
+        let owned_by = model["owned_by"].as_str().unwrap();
+        assert!(!model_id.is_empty(), "Model ID should not be empty");
+        assert!(!owned_by.is_empty(), "owned_by should not be empty");
+    }
+}
+
+#[tokio::test]
+async fn test_models_endpoint_includes_default_model() {
+    let server = FullTestServer::new().await;
+    let client = server.client();
+
+    let response = client.get("/v1/models").await;
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let models = body["data"].as_array().unwrap();
+
+    // Should include the default model from config (claude-sonnet-4-20250514)
+    let model_ids: Vec<&str> = models
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+
+    assert!(
+        model_ids.iter().any(|id: &&str| id.contains("claude")),
+        "Should include a Claude model (default model): {:?}",
+        model_ids
+    );
+}
+
+#[tokio::test]
+async fn test_models_endpoint_includes_agent_models() {
+    let server = FullTestServer::new().await;
+    let client = server.client();
+
+    // Register an agent with a specific model
+    let register_response = client
+        .post_json(
+            "/api/agents",
+            &serde_json::json!({
+                "name": "test-agent",
+                "kind": "api_client",
+                "model": "custom-test-model"
+            }),
+        )
+        .await;
+    assert_eq!(register_response.status(), 201);
+
+    // Get models list
+    let response = client.get("/v1/models").await;
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let models = body["data"].as_array().unwrap();
+
+    // Should include the agent's custom model
+    let model_ids: Vec<&str> = models
+        .iter()
+        .map(|m| m["id"].as_str().unwrap())
+        .collect();
+
+    assert!(
+        model_ids.contains(&"custom-test-model"),
+        "Should include agent's model: {:?}",
+        model_ids
+    );
+}
+
+#[tokio::test]
+async fn test_models_endpoint_deduplicates() {
+    let server = FullTestServer::new().await;
+    let client = server.client();
+
+    // Register multiple agents with the same model
+    for i in 1..=3 {
+        let response = client
+            .post_json(
+                "/api/agents",
+                &serde_json::json!({
+                    "name": format!("agent-{}", i),
+                    "kind": "api_client", 
+                    "model": "duplicate-model"
+                }),
+            )
+            .await;
+        assert_eq!(response.status(), 201);
+    }
+
+    // Get models list  
+    let response = client.get("/v1/models").await;
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let models = body["data"].as_array().unwrap();
+
+    // Count occurrences of duplicate-model
+    let duplicate_count = models
+        .iter()
+        .filter(|m| m["id"].as_str().unwrap() == "duplicate-model")
+        .count();
+
+    assert_eq!(
+        duplicate_count, 1,
+        "Should only include duplicate-model once, found {} times",
+        duplicate_count
+    );
+}
+
+#[tokio::test]
+async fn test_models_endpoint_model_ownership_inference() {
+    let server = FullTestServer::new().await;
+    let client = server.client();
+
+    // Register agents with different model types
+    let test_models = vec![
+        ("claude-agent", "claude-3-opus"),
+        ("gpt-agent", "gpt-4"),
+        ("llama-agent", "llama-2-7b"),
+        ("custom-agent", "acme/custom-model"),
+    ];
+
+    for (name, model) in &test_models {
+        let response = client
+            .post_json(
+                "/api/agents",
+                &serde_json::json!({
+                    "name": name,
+                    "kind": "api_client",
+                    "model": model
+                }),
+            )
+            .await;
+        assert_eq!(response.status(), 201);
+    }
+
+    // Get models and verify ownership inference
+    let response = client.get("/v1/models").await;
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = response.json().await.unwrap();
+    let models = body["data"].as_array().unwrap();
+
+    for model in models {
+        let id = model["id"].as_str().unwrap();
+        let owned_by = model["owned_by"].as_str().unwrap();
+
+        match id {
+            id if id.contains("claude") => {
+                assert_eq!(owned_by, "anthropic", "Claude models should be owned by anthropic");
+            }
+            id if id.contains("gpt") => {
+                assert_eq!(owned_by, "openai", "GPT models should be owned by openai");
+            }
+            id if id.contains("llama") => {
+                assert_eq!(owned_by, "meta", "Llama models should be owned by meta");
+            }
+            id if id.starts_with("acme/") => {
+                assert_eq!(owned_by, "acme", "Custom models should infer owner from prefix");
+            }
+            _ => {
+                // Other models (like default) can have various owners
+                assert!(!owned_by.is_empty(), "All models should have an owner");
+            }
+        }
+    }
+}

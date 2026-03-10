@@ -1,7 +1,7 @@
-//! OpenAI-compatible /v1/chat/completions endpoint
+//! OpenAI-compatible API endpoints
 //!
-//! Implements the OpenAI chat completions API so any OpenAI-compatible client
-//! can connect to pi-daemon agents by pointing at the /v1/chat/completions endpoint.
+//! Implements the OpenAI API so any OpenAI-compatible client can connect to pi-daemon 
+//! agents. Includes /v1/chat/completions and /v1/models endpoints.
 
 use crate::state::AppState;
 use axum::extract::State;
@@ -11,6 +11,7 @@ use axum::response::IntoResponse;
 use axum::Json;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::convert::Infallible;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -66,6 +67,24 @@ pub enum OaiContentPart {
 pub enum OaiStop {
     String(String),
     Array(Vec<String>),
+}
+
+// --- Models Response Types ---
+
+/// OpenAI models list response.
+#[derive(Debug, Serialize)]
+pub struct ModelsResponse {
+    pub object: String,
+    pub data: Vec<ModelInfo>,
+}
+
+/// Information about a specific model.
+#[derive(Debug, Serialize)]
+pub struct ModelInfo {
+    pub id: String,
+    pub object: String,
+    pub created: i64,
+    pub owned_by: String,
 }
 
 // --- Response Types (Non-Streaming) ---
@@ -151,6 +170,16 @@ pub struct ErrorDetails {
 }
 
 // --- Handler ---
+
+/// GET /v1/models - OpenAI-compatible models list endpoint.
+pub async fn models(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let models = discover_available_models(&state).await;
+    
+    Json(ModelsResponse {
+        object: "list".to_string(),
+        data: models,
+    })
+}
 
 /// POST /v1/chat/completions - OpenAI-compatible chat completions endpoint.
 pub async fn chat_completions(
@@ -353,6 +382,127 @@ fn estimate_tokens(text: &str) -> u32 {
     (text.len() as f32 / 4.0).ceil() as u32
 }
 
+/// Discover available models from multiple sources.
+async fn discover_available_models(state: &AppState) -> Vec<ModelInfo> {
+    let mut models = Vec::new();
+    let mut seen_models = HashSet::new();
+    let created_timestamp = Utc::now().timestamp();
+
+    // 1. Add the default model from configuration
+    let default_model = &state.config.default_model;
+    if !default_model.is_empty() && seen_models.insert(default_model.clone()) {
+        models.push(ModelInfo {
+            id: default_model.clone(),
+            object: "model".to_string(),
+            created: created_timestamp,
+            owned_by: infer_model_owner(default_model),
+        });
+    }
+
+    // 2. Add models from currently registered agents
+    let registered_agents = state.kernel.registry.list();
+    for agent in registered_agents {
+        if let Some(model) = agent.model {
+            if !model.is_empty() && seen_models.insert(model.clone()) {
+                models.push(ModelInfo {
+                    id: model.clone(),
+                    object: "model".to_string(),
+                    created: created_timestamp,
+                    owned_by: infer_model_owner(&model),
+                });
+            }
+        }
+    }
+
+    // 3. Add well-known models based on configured providers
+    add_provider_models(state, &mut models, &mut seen_models, created_timestamp);
+
+    models
+}
+
+/// Infer the model owner/provider from the model name.
+fn infer_model_owner(model_name: &str) -> String {
+    let model_lower = model_name.to_lowercase();
+    
+    if model_lower.contains("claude") || model_lower.contains("anthropic") {
+        "anthropic".to_string()
+    } else if model_lower.contains("gpt") || model_lower.contains("openai") {
+        "openai".to_string()
+    } else if model_lower.contains("llama") || model_lower.contains("mistral") || model_lower.contains("codellama") {
+        "meta".to_string()
+    } else if model_lower.contains("gemini") || model_lower.contains("palm") {
+        "google".to_string()
+    } else if model_lower.contains("titan") {
+        "amazon".to_string()
+    } else {
+        // For unknown models, try to extract owner from model name patterns like "company/model"
+        if let Some(slash_idx) = model_name.find('/') {
+            model_name[..slash_idx].to_string()
+        } else {
+            "unknown".to_string()
+        }
+    }
+}
+
+/// Add well-known models based on configured providers.
+fn add_provider_models(
+    state: &AppState,
+    models: &mut Vec<ModelInfo>,
+    seen_models: &mut HashSet<String>,
+    created_timestamp: i64,
+) {
+    let providers = &state.config.providers;
+
+    // Anthropic models if API key is configured
+    if !providers.anthropic_api_key.is_empty() {
+        let anthropic_models = vec![
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-haiku-20241022", 
+            "claude-3-opus-20240229",
+            "claude-3-sonnet-20240229",
+            "claude-3-haiku-20240307",
+        ];
+        
+        for model in anthropic_models {
+            if seen_models.insert(model.to_string()) {
+                models.push(ModelInfo {
+                    id: model.to_string(),
+                    object: "model".to_string(),
+                    created: created_timestamp,
+                    owned_by: "anthropic".to_string(),
+                });
+            }
+        }
+    }
+
+    // OpenAI models if API key is configured
+    if !providers.openai_api_key.is_empty() {
+        let openai_models = vec![
+            "gpt-4o",
+            "gpt-4o-mini", 
+            "gpt-4-turbo",
+            "gpt-4",
+            "gpt-3.5-turbo",
+        ];
+        
+        for model in openai_models {
+            if seen_models.insert(model.to_string()) {
+                models.push(ModelInfo {
+                    id: model.to_string(),
+                    object: "model".to_string(),
+                    created: created_timestamp,
+                    owned_by: "openai".to_string(),
+                });
+            }
+        }
+    }
+
+    // Note: We could add more providers (Ollama local models discovery, 
+    // OpenRouter model listing, etc.) in the future by making HTTP calls
+    // to their respective APIs, but for now we'll stick to well-known models
+    // to keep the implementation performant and reliable.
+}
+
 /// Create error response.
 fn error_response(
     status: StatusCode,
@@ -491,5 +641,45 @@ mod tests {
         assert!(json.contains("chat.completion.chunk"));
         assert!(json.contains("assistant"));
         assert!(!json.contains("\"content\"")); // Should be omitted when None
+    }
+
+    #[test]
+    fn test_models_response_serialization() {
+        let response = ModelsResponse {
+            object: "list".to_string(),
+            data: vec![
+                ModelInfo {
+                    id: "claude-3-5-sonnet-20241022".to_string(),
+                    object: "model".to_string(),
+                    created: 1700000000,
+                    owned_by: "anthropic".to_string(),
+                },
+                ModelInfo {
+                    id: "gpt-4".to_string(),
+                    object: "model".to_string(), 
+                    created: 1700000000,
+                    owned_by: "openai".to_string(),
+                },
+            ],
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"object\":\"list\""));
+        assert!(json.contains("claude-3-5-sonnet-20241022"));
+        assert!(json.contains("gpt-4"));
+        assert!(json.contains("anthropic"));
+        assert!(json.contains("openai"));
+    }
+
+    #[test]
+    fn test_infer_model_owner() {
+        assert_eq!(infer_model_owner("claude-3-sonnet"), "anthropic");
+        assert_eq!(infer_model_owner("gpt-4"), "openai");
+        assert_eq!(infer_model_owner("llama-2-7b"), "meta");
+        assert_eq!(infer_model_owner("gemini-pro"), "google");
+        assert_eq!(infer_model_owner("anthropic/claude-3-opus"), "anthropic");
+        assert_eq!(infer_model_owner("openai/gpt-4"), "openai");
+        assert_eq!(infer_model_owner("custom-company/special-model"), "custom-company");
+        assert_eq!(infer_model_owner("unknown-model"), "unknown");
     }
 }
