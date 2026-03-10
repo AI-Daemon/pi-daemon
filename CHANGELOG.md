@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fix test, build, and sandbox jobs receiving false classify outputs due to missing `needs: [classify]` (#151)
+  - `test`, `build`, and `sandbox` jobs in `pr-pipeline.yml` referenced `needs.classify.outputs.*` but did not include `classify` in their `needs` arrays
+  - GitHub Actions only allows output access from jobs in the `needs` array, so classify flags (`has_rust`, `has_deps`, etc.) evaluated to null/false
+  - All inner jobs (unit tests, integration tests, coverage, release build, binary size, MSRV, sandbox) were unconditionally skipped on every PR
+  - Fix: add `classify` to `needs` arrays — `test: [lint-format, classify]`, `build: [lint-format, classify]`, `sandbox: [build, classify]`
+  - No execution order change — `classify` already runs before `lint-format` transitively
+  - Updated pipeline dependency graph in `pr-pipeline.yml` and `PR-Reviews.md`
 - Suppress clean-PASS LLM code reviews from PR conversation (#148)
   - All 3 review types (architectural, test quality, configuration) now check for actionable findings before posting
   - Clean PASS (verdict PASS + zero inline comments + zero body actions + zero body issues) writes to `$GITHUB_STEP_SUMMARY` instead of `pulls.createReview()`

@@ -135,16 +135,18 @@ The PR Pipeline (`pr-pipeline.yml`) is the sole orchestrator for all PR checks. 
 
 **Pipeline dependency graph:**
 ```
-scope-gate ──→ classify ──→ lint-format ──┬──→ test ──────────→ code-review ──┐
-                       │                  │                                    │
-                       │                  └──→ build ─────────→ sandbox ──────┤
-                       │                                                      │
-                       ├──→ security (parallel with lint) ────────────────────┤
-                       │                                                      │
-                       └──→ hygiene (parallel with lint) ─────────────────────┤
-                                                                              │
-                                                              update-dashboard ◄┘
-                                                              (if: always, needs: ALL)
+scope-gate ──→ classify ──┬──→ lint-format ──┬──→ test ──────────→ code-review ──┐
+                          │                  │                                    │
+                          │                  └──→ build ─────────→ sandbox ──────┤
+                          │                       │                  │            │
+                          │   (classify outputs)──┤──────────────────┘            │
+                          │                                                       │
+                          ├──→ security (parallel with lint) ─────────────────────┤
+                          │                                                       │
+                          └──→ hygiene (parallel with lint) ──────────────────────┤
+                                                                                  │
+                                                                  update-dashboard ◄┘
+                                                                  (if: always, needs: ALL)
 ```
 
 **Key ordering guarantees:**
@@ -152,6 +154,7 @@ scope-gate ──→ classify ──→ lint-format ──┬──→ test ─�
 - Sandbox only runs after build passes — no point testing a binary that doesn't compile (#127)
 - Build runs in parallel with tests (both depend on lint) for faster pipeline completion
 - Security and hygiene run in parallel with lint (only depend on scope gate) (#128)
+- Test, build, and sandbox all include `classify` in their `needs` arrays so they can access classification outputs (`has_rust`, `has_deps`, etc.) — GitHub Actions only allows output access from jobs in the `needs` array (#151)
 
 ### 🔬 Scope Gate
 

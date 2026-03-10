@@ -7,16 +7,22 @@ name: PR Pipeline
 # Dependency graph:
 #   scope-gate
 #       │
-#       ├──→ lint-format ──┬──→ test ──────────→ code-review ──┐
-#       │                  │                                    │
-#       │                  └──→ build ─────────→ sandbox ──────┤
-#       │                                                      │
-#       ├──→ security (parallel with lint) ────────────────────┤
-#       │                                                      │
-#       └──→ hygiene (parallel with lint) ─────────────────────┤
-#                                                              │
-#                                              update-dashboard ◄┘
-#                                              (if: always, needs: ALL)
+#       ├──→ classify ──┬──→ lint-format ──┬──→ test ──────────→ code-review ──┐
+#       │               │                  │                                    │
+#       │               │                  └──→ build ─────────→ sandbox ──────┤
+#       │               │                       │                  │            │
+#       │               │   (classify outputs)──┤──────────────────┘            │
+#       │               │                       │                               │
+#       │               ├──→ security (parallel with lint) ─────────────────────┤
+#       │               │                                                       │
+#       │               └──→ hygiene (parallel with lint) ──────────────────────┤
+#       │                                                                       │
+#       │                                                       update-dashboard ◄┘
+#       │                                                       (if: always, needs: ALL)
+#
+#   Note: test, build, and sandbox all need [classify] in addition to their
+#   ordering deps so they can access classify outputs (has_rust, has_deps, etc.).
+#   GitHub Actions only allows output access from jobs in the `needs` array.
 #
 # All PR checks live under this single workflow. Post-merge CI on main
 # is handled by ci-main.yml. Auto-approve watches only "PR Pipeline".
@@ -112,7 +118,7 @@ jobs:
     secrets: inherit
 
   test:
-    needs: [lint-format]
+    needs: [lint-format, classify]
     if: ${{ !failure() && !cancelled() }}
     uses: ./.github/workflows/_test.yml
     with:
@@ -149,7 +155,7 @@ jobs:
     secrets: inherit
 
   build:
-    needs: [lint-format]
+    needs: [lint-format, classify]
     if: ${{ !failure() && !cancelled() }}
     uses: ./.github/workflows/_build.yml
     with:
@@ -181,7 +187,7 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
 
   sandbox:
-    needs: [build]
+    needs: [build, classify]
     if: ${{ !failure() && !cancelled() }}
     uses: ./.github/workflows/_sandbox.yml
     with:
