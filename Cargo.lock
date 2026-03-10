@@ -1235,12 +1235,14 @@ name = "pi-daemon-pi-manager"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "dirs",
  "pi-daemon-kernel",
  "pi-daemon-types",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-util",
  "toml",
  "tracing",
 ]
@@ -2062,6 +2064,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-sink",
+ "futures-util",
  "pin-project-lite",
  "tokio",
 ]

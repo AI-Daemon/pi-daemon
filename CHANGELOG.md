@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Pi binary discovery: find on `$PATH`, parse `pi --version`, semver compatibility check
   - Pi auto-installer: Node.js/npm pre-flight, `npm install -g @mariozechner/pi-coding-agent`
   - `PiManager` struct with discovery + auto-install orchestration, `PiStatus` type
+- Pi process spawner and health monitor (#162)
+  - Spawner: launch Pi as `tokio::process::Child` with injected env (`PI_DAEMON_URL`, provider API keys, `GITHUB_TOKEN`), bridge extension auto-discovered relative to daemon binary
+  - Health monitor: poll child process every 5s, auto-restart on crash with exponential backoff (1s → 2s → 4s → ... → 30s cap), reset after 60s stable run
+  - `PiManager` fully wired: `start()` spawns + monitors, `stop()` kills + unregisters, `restart()` cycles, `start_pi()` manual spawn
 
 ### Fixed
 - Fix LLM inline comments failing with "Line could not be resolved" errors (#172)
