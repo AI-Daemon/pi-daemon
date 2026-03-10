@@ -356,6 +356,16 @@ The **Sandbox Integration Test** (`_sandbox.yml`) is a reusable workflow that te
 - PID file cleanup validation
 - Port release confirmation
 
+#### Phase 5: CLI Validation
+- `status` reports daemon not running
+- `stop` fails gracefully when daemon is down
+- `version` always works
+- `config` always works
+
+### Dynamic Step Summary
+
+Each phase's final step writes a pass/fail marker to `$GITHUB_ENV` (e.g. `PHASE_SMOKE=passed`). The summary step (runs with `if: always()`) reads those markers and renders a dynamic markdown table to `$GITHUB_STEP_SUMMARY`, showing ✅ or ❌ per phase. If a phase's step fails, its env var is never set, so it correctly defaults to ❌ (#153).
+
 ### Critical Gaps Addressed
 
 | In-Process Tests Miss | Real Deployment Bug | Sandbox Catches |
