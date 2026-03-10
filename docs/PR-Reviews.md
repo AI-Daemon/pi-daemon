@@ -446,7 +446,6 @@ Comprehensive code review system with intelligent file classification and specia
 - **Backward Compat:** Actions/issues without file/line fall back to the top-level review body
 - **Skip Handling:** Reviews with no relevant files write to `$GITHUB_STEP_SUMMARY` instead of PR comments
 - **Clean-PASS Suppression (#148):** When the LLM returns PASS with zero findings (no inline comments, no body actions, no body issues), the review is written to `$GITHUB_STEP_SUMMARY` instead of `createReview()`. Any stale review from a previous push (which may have had findings) is still dismissed first to avoid orphaned findings. FAIL verdicts and PASS-with-findings always post `createReview()` as before.
-- **Review-Before-Fail (#166):** Workflow step ordering ensures PR reviews are posted before job termination. All review types (architectural, test quality, configuration) create their PR reviews first, then fail the job if needed. This guarantees authors see detailed LLM feedback with inline comments even on FAIL verdicts.
 - **Auto-Pass Logic:** PRs with only generated files skip all reviews
 
 **💰 Cost:** ~$0.01–0.05 per PR review (Gemini 2.5 Flash pricing), token usage optimized through intelligent filtering.
