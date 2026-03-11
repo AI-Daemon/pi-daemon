@@ -8,6 +8,15 @@
 4. Test: `cargo test --all`
 5. Lint: `cargo clippy --all-targets -- -D warnings && cargo fmt --all -- --check`
 
+## Issue Templates
+
+Use the templates in `docs/templates/` when filing new issues:
+
+- **[Bug Report](templates/bug-report.md)** — for defects, regressions, and unexpected behavior
+- **[Feature Request](templates/feature-request.md)** — for enhancements, new capabilities, and improvements
+
+Copy the template, fill in each section, and delete the guidance comments.
+
 ## PR Process
 
 1. Create a branch from `main`
