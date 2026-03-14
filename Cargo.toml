@@ -8,6 +8,7 @@ members = [
     "crates/pi-daemon-cli",
     "crates/pi-daemon-test-utils", # Added for CI foundation
     "crates/pi-daemon-pi-manager",
+    "crates/pi-daemon-provider",
 ]
 
 [workspace.package]
