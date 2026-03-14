@@ -1,6 +1,6 @@
 use crate::client::TestClient;
+use crate::mock_provider::MockProvider;
 use axum::{routing::get, Router};
-use pi_daemon_api::server::build_router;
 use pi_daemon_api::state::AppState;
 use pi_daemon_kernel::PiDaemonKernel;
 use pi_daemon_types::config::DaemonConfig;
@@ -88,7 +88,8 @@ pub struct FullTestServer {
 impl FullTestServer {
     /// Boot a full pi-daemon API server with a real kernel on a random port.
     ///
-    /// Uses default `DaemonConfig` with listen address set to a random port.
+    /// Uses default `DaemonConfig` with a [`MockProvider`] injected so that
+    /// `/v1/chat/completions` works without real API keys.
     pub async fn new() -> Self {
         let config = DaemonConfig {
             listen_addr: "127.0.0.1:0".to_string(),
@@ -99,6 +100,7 @@ impl FullTestServer {
 
     /// Boot a full pi-daemon API server with custom configuration.
     ///
+    /// A [`MockProvider`] is injected so chat completions work in tests.
     /// The `listen_addr` field in the config is ignored — a random port is always used.
     pub async fn with_config(mut config: DaemonConfig) -> Self {
         config.listen_addr = "127.0.0.1:0".to_string();
@@ -106,7 +108,12 @@ impl FullTestServer {
         let kernel = Arc::new(PiDaemonKernel::new());
         kernel.init().await;
 
-        let (router, state) = build_router(kernel, config);
+        // Inject mock provider so /v1/chat/completions works without real API keys
+        let mock = Arc::new(MockProvider::new());
+        let state = Arc::new(AppState::with_provider(kernel, config, mock));
+
+        let (router, state) =
+            pi_daemon_api::server::build_router_with_state(state);
 
         let listener = TcpListener::bind("127.0.0.1:0")
             .await

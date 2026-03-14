@@ -33,6 +33,14 @@ const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Build the full API router.
 pub fn build_router(kernel: Arc<PiDaemonKernel>, config: DaemonConfig) -> (Router, Arc<AppState>) {
     let state = Arc::new(AppState::new(kernel, config));
+    build_router_with_state(state)
+}
+
+/// Build the full API router with pre-built application state.
+///
+/// This variant is primarily for testing where custom providers (e.g. mocks)
+/// need to be injected into the state before the router is constructed.
+pub fn build_router_with_state(state: Arc<AppState>) -> (Router, Arc<AppState>) {
 
     // REST API routes — short-lived request/response cycles.
     // These get the HTTP_REQUEST_TIMEOUT applied via TimeoutLayer.

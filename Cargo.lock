@@ -1173,12 +1173,14 @@ dependencies = [
  "dashmap",
  "futures",
  "pi-daemon-kernel",
+ "pi-daemon-provider",
  "pi-daemon-test-utils",
  "pi-daemon-types",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-stream",
  "tokio-tungstenite 0.24.0",
  "tower",
  "tower-http",
@@ -1268,14 +1270,18 @@ dependencies = [
 name = "pi-daemon-test-utils"
 version = "0.1.0"
 dependencies = [
+ "async-stream",
+ "async-trait",
  "axum",
  "pi-daemon-api",
  "pi-daemon-kernel",
+ "pi-daemon-provider",
  "pi-daemon-types",
  "reqwest",
  "serde_json",
  "tempfile",
  "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
