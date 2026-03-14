@@ -21,16 +21,22 @@ use tracing::info;
 /// tokio runtime from being overwhelmed by unbounded concurrent handlers.
 const MAX_CONCURRENT_REQUESTS: usize = 256;
 
-/// HTTP request timeout. If a request (including response body) takes longer
+/// HTTP request timeout for REST API endpoints. If a request takes longer
 /// than this, the connection is dropped with 408 Request Timeout. This prevents
 /// stalled connections from accumulating under load.
+///
+/// NOT applied to long-lived connections (WebSocket, SSE streaming) which have
+/// their own timeout/keepalive mechanisms (see `ws.rs` for WS_IDLE_TIMEOUT,
+/// WS_READ_TIMEOUT, and WS_PING_INTERVAL).
 const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Build the full API router.
 pub fn build_router(kernel: Arc<PiDaemonKernel>, config: DaemonConfig) -> (Router, Arc<AppState>) {
     let state = Arc::new(AppState::new(kernel, config));
 
-    let api_routes = Router::new()
+    // REST API routes — short-lived request/response cycles.
+    // These get the HTTP_REQUEST_TIMEOUT applied via TimeoutLayer.
+    let rest_routes = Router::new()
         .route("/api/status", axum::routing::get(routes::get_status))
         .route("/api/agents", axum::routing::get(routes::list_agents))
         .route("/api/agents", axum::routing::post(routes::register_agent))
@@ -49,8 +55,19 @@ pub fn build_router(kernel: Arc<PiDaemonKernel>, config: DaemonConfig) -> (Route
         .route("/api/events", axum::routing::get(routes::get_events))
         .route("/api/health", axum::routing::get(routes::health_check))
         .route("/api/shutdown", axum::routing::post(routes::shutdown))
-        .route("/ws/{agent_id}", axum::routing::get(ws::ws_upgrade))
         .route("/v1/models", axum::routing::get(openai_compat::models))
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            HTTP_REQUEST_TIMEOUT,
+        ));
+
+    // Long-lived connection routes — WebSocket and SSE streaming.
+    // These must NOT have the HTTP request timeout applied because they are
+    // designed to stay open for extended periods. WebSocket connections have
+    // their own idle timeout (30 min), read timeout (60s), and ping interval
+    // (15s) defined in ws.rs. SSE streams run until the LLM response completes.
+    let streaming_routes = Router::new()
+        .route("/ws/{agent_id}", axum::routing::get(ws::ws_upgrade))
         .route(
             "/v1/chat/completions",
             axum::routing::post(openai_compat::chat_completions),
@@ -66,20 +83,19 @@ pub fn build_router(kernel: Arc<PiDaemonKernel>, config: DaemonConfig) -> (Route
 
     // Layer order matters (outermost first):
     // 1. ConcurrencyLimit — bounds in-flight requests to prevent runtime exhaustion
-    // 2. Timeout — drops requests that take too long, freeing concurrency slots
-    // 3. Compression — applied to response bodies
-    // 4. CORS — adds headers
-    // 5. Trace — logs request/response
+    // 2. Compression — applied to response bodies
+    // 3. CORS — adds headers
+    // 4. Trace — logs request/response
+    //
+    // Note: TimeoutLayer is applied per-group above (rest_routes only), NOT
+    // globally, so WebSocket and SSE connections are not killed after 30s.
     let router = Router::new()
-        .merge(api_routes)
+        .merge(rest_routes)
+        .merge(streaming_routes)
         .merge(webchat_routes)
         .layer(CompressionLayer::new())
         .layer(cors)
         .layer(TraceLayer::new_for_http())
-        .layer(TimeoutLayer::with_status_code(
-            axum::http::StatusCode::REQUEST_TIMEOUT,
-            HTTP_REQUEST_TIMEOUT,
-        ))
         .layer(ConcurrencyLimitLayer::new(MAX_CONCURRENT_REQUESTS))
         .with_state(state.clone());
 
