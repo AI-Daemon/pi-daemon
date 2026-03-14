@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 pi-daemon-types = { path = "../pi-daemon-types" }
 pi-daemon-kernel = { path = "../pi-daemon-kernel" }
+pi-daemon-provider = { path = "../pi-daemon-provider" }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }
@@ -22,6 +23,7 @@ chrono = { workspace = true }
 bytes = { workspace = true }
 anyhow = { workspace = true }
 async-stream = { workspace = true }
+tokio-stream = { workspace = true }
 
 [dev-dependencies]
 reqwest = { workspace = true }
