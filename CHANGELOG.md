@@ -15,6 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - SSE streams run until the LLM response completes naturally
 
 ### Added
+- Wire LLM provider into OpenAI-compatible `/v1/chat/completions` endpoint (#236)
+  - Both streaming (SSE) and non-streaming paths now call real LLM providers via `ProviderRouter`
+  - Full conversation context sent to LLM (all messages, not just last user message)
+  - System messages extracted as separate `system_prompt` for Anthropic compatibility
+  - Real `usage` object with actual `prompt_tokens`, `completion_tokens`, `total_tokens` from provider
+  - `max_tokens`, `temperature`, `top_p`, `stop` sequences forwarded to provider
+  - Parameter validation: `temperature` 0–2, `top_p` 0–1, `max_tokens` > 0
+  - Returns 400 with OpenAI-style error when model/provider not available
+  - `Cache-Control: no-cache` and `X-Accel-Buffering: no` headers on SSE responses (#211)
+  - `AppState` now holds `Arc<dyn Provider>` with `with_provider()` for mock injection
+  - `MockProvider` in test-utils for integration testing without real API keys
+  - 10 new integration tests (40 total) covering validation, SSE headers, conversation context
 - New `pi-daemon-provider` crate — streaming LLM completions from Anthropic, OpenAI, and OpenRouter (#234)
   - `Provider` trait with async `complete()` returning `CompletionStream`
   - `AnthropicProvider` — `/v1/messages` SSE streaming with tool use accumulation
