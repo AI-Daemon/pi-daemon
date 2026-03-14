@@ -112,8 +112,7 @@ impl FullTestServer {
         let mock = Arc::new(MockProvider::new());
         let state = Arc::new(AppState::with_provider(kernel, config, mock));
 
-        let (router, state) =
-            pi_daemon_api::server::build_router_with_state(state);
+        let (router, state) = pi_daemon_api::server::build_router_with_state(state);
 
         let listener = TcpListener::bind("127.0.0.1:0")
             .await

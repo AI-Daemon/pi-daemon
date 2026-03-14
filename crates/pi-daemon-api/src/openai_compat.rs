@@ -244,7 +244,10 @@ pub async fn chat_completions(
             return error_response(
                 StatusCode::BAD_REQUEST,
                 "invalid_request_error",
-                &format!("Model '{}' is not available: no LLM provider configured", req.model),
+                &format!(
+                    "Model '{}' is not available: no LLM provider configured",
+                    req.model
+                ),
                 Some("model"),
             )
             .into_response();
@@ -405,10 +408,7 @@ async fn handle_streaming_request(
     (
         [
             (header::CACHE_CONTROL, "no-cache"),
-            (
-                header::HeaderName::from_static("x-accel-buffering"),
-                "no",
-            ),
+            (header::HeaderName::from_static("x-accel-buffering"), "no"),
         ],
         Sse::new(stream).keep_alive(KeepAlive::default()),
     )

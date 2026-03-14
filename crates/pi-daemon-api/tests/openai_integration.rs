@@ -36,10 +36,7 @@ async fn test_non_streaming_chat_completion() {
 
     // Verify content is present (mock provider echoes the user message)
     let content = body["choices"][0]["message"]["content"].as_str().unwrap();
-    assert!(
-        !content.is_empty(),
-        "Response content should not be empty"
-    );
+    assert!(!content.is_empty(), "Response content should not be empty");
 }
 
 #[tokio::test]
@@ -1242,10 +1239,7 @@ async fn test_top_p_validation_out_of_range() {
         .await;
     assert_eq!(response.status(), 400);
     let body: serde_json::Value = response.json().await.unwrap();
-    assert!(body["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("top_p"));
+    assert!(body["error"]["message"].as_str().unwrap().contains("top_p"));
 }
 
 #[tokio::test]

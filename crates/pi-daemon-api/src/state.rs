@@ -25,18 +25,21 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(kernel: Arc<PiDaemonKernel>, config: DaemonConfig) -> Self {
-        let provider: Option<Arc<dyn Provider>> =
-            match ProviderRouter::from_config(&config.providers) {
-                Ok(router) if router.has_providers() => Some(Arc::new(router)),
-                Ok(_) => {
-                    warn!("No LLM provider API keys configured — /v1/chat/completions will return errors");
-                    None
-                }
-                Err(e) => {
-                    warn!("Failed to initialize provider router: {e}");
-                    None
-                }
-            };
+        let provider: Option<Arc<dyn Provider>> = match ProviderRouter::from_config(
+            &config.providers,
+        ) {
+            Ok(router) if router.has_providers() => Some(Arc::new(router)),
+            Ok(_) => {
+                warn!(
+                    "No LLM provider API keys configured — /v1/chat/completions will return errors"
+                );
+                None
+            }
+            Err(e) => {
+                warn!("Failed to initialize provider router: {e}");
+                None
+            }
+        };
 
         Self {
             kernel,
