@@ -338,7 +338,7 @@ async fn handle_streaming_request(
         };
 
         yield Ok::<_, Infallible>(SseEvent::default().data(
-            serde_json::to_string(&role_chunk).unwrap()
+            serde_json::to_string(&role_chunk).expect("role chunk serialization")
         ));
 
         // Stream real provider events
@@ -362,7 +362,7 @@ async fn handle_streaming_request(
                     };
 
                     yield Ok(SseEvent::default().data(
-                        serde_json::to_string(&content_chunk).unwrap()
+                        serde_json::to_string(&content_chunk).expect("content chunk serialization")
                     ));
                 }
                 StreamEvent::Stop(_) => {
@@ -383,7 +383,7 @@ async fn handle_streaming_request(
                     };
 
                     yield Ok(SseEvent::default().data(
-                        serde_json::to_string(&final_chunk).unwrap()
+                        serde_json::to_string(&final_chunk).expect("final chunk serialization")
                     ));
                 }
                 StreamEvent::Done(_usage) => {
