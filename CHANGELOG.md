@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - SSE streams run until the LLM response completes naturally
 
 ### Added
+- New `pi-daemon-provider` crate — streaming LLM completions from Anthropic, OpenAI, and OpenRouter (#234)
+  - `Provider` trait with async `complete()` returning `CompletionStream`
+  - `AnthropicProvider` — `/v1/messages` SSE streaming with tool use accumulation
+  - `OpenAIProvider` — `/v1/chat/completions` SSE streaming with tool_calls
+  - `OpenRouterProvider` — OpenAI-compatible with routing headers
+  - `ProviderRouter` — model name → provider dispatch (`claude-*` → Anthropic, `gpt-*` → OpenAI)
+  - Manual SSE parser, message format converters, retry with exponential backoff
 - New `pi-daemon-pi-manager` crate — managed Pi process lifecycle (#161)
   - `PiManagerConfig` with `[pi]` section in `config.toml` (`binary_path`, `min_version`, `auto_install`, `auto_start`, `pool_size`, `working_directory`)
   - Pi binary discovery: find on `$PATH`, parse `pi --version`, semver compatibility check
