@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New `pi-daemon-provider` crate — streaming LLM completions from Anthropic, OpenAI, and OpenRouter (#234)
   - `Provider` trait with async `complete()` returning `CompletionStream`
   - `AnthropicProvider` — `/v1/messages` SSE streaming with tool use accumulation
+  - Single `reqwest::Client` reused per provider instance (#230)
   - `OpenAIProvider` — `/v1/chat/completions` SSE streaming with tool_calls
   - `OpenRouterProvider` — OpenAI-compatible with routing headers
   - `ProviderRouter` — model name → provider dispatch (`claude-*` → Anthropic, `gpt-*` → OpenAI)
