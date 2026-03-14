@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- 30-second HTTP request timeout was killing WebSocket and SSE streaming connections (#207)
+  - Split route tree so `TimeoutLayer(30s)` only applies to REST API endpoints (`/api/*`, `/v1/models`)
+  - WebSocket (`/ws/:agent_id`) and SSE streaming (`/v1/chat/completions`) routes are now excluded from the timeout
+  - WebSocket connections continue to use their own idle timeout (30 min), read timeout (60s), and ping interval (15s)
+  - SSE streams run until the LLM response completes naturally
+
 ### Added
 - New `pi-daemon-pi-manager` crate — managed Pi process lifecycle (#161)
   - `PiManagerConfig` with `[pi]` section in `config.toml` (`binary_path`, `min_version`, `auto_install`, `auto_start`, `pool_size`, `working_directory`)
