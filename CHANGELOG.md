@@ -21,7 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Single `reqwest::Client` reused per provider instance (#230)
   - `OpenAIProvider` — `/v1/chat/completions` SSE streaming with tool_calls
   - `OpenRouterProvider` — OpenAI-compatible with routing headers
-  - `ProviderRouter` — model name → provider dispatch (`claude-*` → Anthropic, `gpt-*` → OpenAI)
+  - `ProviderRouter` — model name → provider dispatch (`claude-*` → Anthropic, `gpt-*` → OpenAI, fallback → OpenRouter)
+  - Integration tests with mock axum SSE servers for all providers (streaming text, tool use, retries, errors)
   - Manual SSE parser, message format converters, retry with exponential backoff
 - New `pi-daemon-pi-manager` crate — managed Pi process lifecycle (#161)
   - `PiManagerConfig` with `[pi]` section in `config.toml` (`binary_path`, `min_version`, `auto_install`, `auto_start`, `pool_size`, `working_directory`)
