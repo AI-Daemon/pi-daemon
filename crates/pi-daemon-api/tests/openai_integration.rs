@@ -3,7 +3,6 @@
 //! These are contract tests - if they break, every OpenAI-compatible client breaks.
 
 use pi_daemon_test_utils::{assert_openai_completion, FullTestServer};
-use std::sync::Arc;
 
 #[tokio::test]
 async fn test_non_streaming_chat_completion() {
@@ -1138,30 +1137,9 @@ async fn test_models_endpoint_with_configured_providers() {
 
 #[tokio::test]
 async fn test_no_provider_returns_model_not_available() {
-    // Create a server with no provider (empty config, no mock injected)
-    let kernel = Arc::new(pi_daemon_kernel::PiDaemonKernel::new());
-    kernel.init().await;
-    let config = pi_daemon_types::config::DaemonConfig {
-        listen_addr: "127.0.0.1:0".to_string(),
-        ..Default::default()
-    };
-    // Use AppState::new (not with_provider) — no API keys means no provider
-    let state = Arc::new(pi_daemon_api::state::AppState::new(kernel, config));
-    let (router, _state) = pi_daemon_api::server::build_router_with_state(state);
+    let server = FullTestServer::without_provider().await;
+    let client = server.client();
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let port = listener.local_addr().unwrap().port();
-    tokio::spawn(async move {
-        axum::serve(
-            listener,
-            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-        )
-        .await
-        .unwrap();
-    });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-    let client = pi_daemon_test_utils::TestClient::new(&format!("http://127.0.0.1:{}", port));
     let response = client
         .post_json(
             "/v1/chat/completions",
@@ -1174,12 +1152,19 @@ async fn test_no_provider_returns_model_not_available() {
         .await;
 
     assert_eq!(response.status(), 400);
-    let body: serde_json::Value = response.json().await.unwrap();
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .expect("error response should be valid JSON");
     assert_eq!(body["error"]["type"], "invalid_request_error");
-    assert!(body["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("not available"));
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .expect("error message should be a string")
+            .contains("not available"),
+        "Error message should mention 'not available': {}",
+        body["error"]["message"]
+    );
 }
 
 #[tokio::test]
@@ -1200,11 +1185,18 @@ async fn test_temperature_validation_out_of_range() {
         )
         .await;
     assert_eq!(response.status(), 400);
-    let body: serde_json::Value = response.json().await.unwrap();
-    assert!(body["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("temperature"));
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .expect("validation error should be valid JSON");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .expect("error message should be a string")
+            .contains("temperature"),
+        "Error should mention temperature: {}",
+        body["error"]["message"]
+    );
 
     // temperature < 0 should fail
     let response = client
@@ -1238,8 +1230,18 @@ async fn test_top_p_validation_out_of_range() {
         )
         .await;
     assert_eq!(response.status(), 400);
-    let body: serde_json::Value = response.json().await.unwrap();
-    assert!(body["error"]["message"].as_str().unwrap().contains("top_p"));
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .expect("validation error should be valid JSON");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .expect("error message should be a string")
+            .contains("top_p"),
+        "Error should mention top_p: {}",
+        body["error"]["message"]
+    );
 }
 
 #[tokio::test]
@@ -1259,11 +1261,18 @@ async fn test_max_tokens_validation_zero() {
         )
         .await;
     assert_eq!(response.status(), 400);
-    let body: serde_json::Value = response.json().await.unwrap();
-    assert!(body["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("max_tokens"));
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .expect("validation error should be valid JSON");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .expect("error message should be a string")
+            .contains("max_tokens"),
+        "Error should mention max_tokens: {}",
+        body["error"]["message"]
+    );
 }
 
 #[tokio::test]
@@ -1328,7 +1337,9 @@ async fn test_full_conversation_context_sent() {
         )
         .await;
 
-    let content = body["choices"][0]["message"]["content"].as_str().unwrap();
+    let content = body["choices"][0]["message"]["content"]
+        .as_str()
+        .expect("response content should be a string");
     // Mock echoes the last user message
     assert!(
         content.contains("3+3"),
@@ -1361,7 +1372,7 @@ async fn test_streaming_has_sse_headers() {
         .get("cache-control")
         .expect("Should have Cache-Control header")
         .to_str()
-        .unwrap();
+        .expect("Cache-Control should be valid UTF-8");
     assert!(
         cache_control.contains("no-cache"),
         "Cache-Control should contain no-cache, got: {}",
@@ -1373,7 +1384,7 @@ async fn test_streaming_has_sse_headers() {
         .get("x-accel-buffering")
         .expect("Should have X-Accel-Buffering header")
         .to_str()
-        .unwrap();
+        .expect("X-Accel-Buffering should be valid UTF-8");
     assert_eq!(x_accel, "no", "X-Accel-Buffering should be 'no'");
 }
 
@@ -1395,9 +1406,15 @@ async fn test_real_token_usage_in_response() {
         .await;
 
     let usage = &body["usage"];
-    let prompt_tokens = usage["prompt_tokens"].as_u64().unwrap();
-    let completion_tokens = usage["completion_tokens"].as_u64().unwrap();
-    let total_tokens = usage["total_tokens"].as_u64().unwrap();
+    let prompt_tokens = usage["prompt_tokens"]
+        .as_u64()
+        .expect("prompt_tokens should be a number");
+    let completion_tokens = usage["completion_tokens"]
+        .as_u64()
+        .expect("completion_tokens should be a number");
+    let total_tokens = usage["total_tokens"]
+        .as_u64()
+        .expect("total_tokens should be a number");
 
     // Token counts come from the provider's Done event, not estimate_tokens()
     assert!(prompt_tokens > 0, "prompt_tokens should be > 0");
@@ -1462,14 +1479,18 @@ async fn test_streaming_mock_provider_text_content() {
         .await;
 
     assert_eq!(response.status(), 200);
-    let body = response.text().await.unwrap();
+    let body = response
+        .text()
+        .await
+        .expect("streaming response should have a text body");
 
     // Collect all text deltas from chunks
     let mut full_text = String::new();
     for line in body.lines() {
         if line.starts_with("data: {") {
             let json_str = &line[6..];
-            let chunk: serde_json::Value = serde_json::from_str(json_str).unwrap();
+            let chunk: serde_json::Value =
+                serde_json::from_str(json_str).expect("SSE chunk should be valid JSON");
             if let Some(content) = chunk["choices"][0]["delta"]["content"].as_str() {
                 full_text.push_str(content);
             }

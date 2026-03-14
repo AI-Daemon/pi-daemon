@@ -50,7 +50,15 @@ impl AppState {
         }
     }
 
-    /// Create AppState with an injected provider (for testing).
+    /// Create AppState with an explicitly injected LLM provider.
+    ///
+    /// This bypasses the normal provider construction from `DaemonConfig`
+    /// and is primarily used in tests to inject a [`MockProvider`] so that
+    /// `/v1/chat/completions` works without real API keys.
+    ///
+    /// The `provider` argument is stored as the active LLM provider and
+    /// will receive all chat completion requests routed through the
+    /// OpenAI-compatible endpoint.
     pub fn with_provider(
         kernel: Arc<PiDaemonKernel>,
         config: DaemonConfig,
