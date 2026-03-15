@@ -10,11 +10,14 @@ use axum::response::sse::{Event as SseEvent, KeepAlive, Sse};
 use axum::response::IntoResponse;
 use axum::Json;
 use chrono::Utc;
+use pi_daemon_provider::{CompletionOptions, Provider, StreamEvent};
+use pi_daemon_types::message::{Message, MessageContent, Role};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::convert::Infallible;
 use std::sync::Arc;
-use tracing::debug;
+use tokio_stream::StreamExt;
+use tracing::{debug, error};
 use uuid::Uuid;
 
 // --- Request Types ---
@@ -188,7 +191,7 @@ pub async fn chat_completions(
     State(state): State<Arc<AppState>>,
     Json(req): Json<ChatCompletionRequest>,
 ) -> impl IntoResponse {
-    // Validate request
+    // Validate request: messages must be non-empty
     if req.messages.is_empty() {
         return error_response(
             StatusCode::BAD_REQUEST,
@@ -199,39 +202,96 @@ pub async fn chat_completions(
         .into_response();
     }
 
+    // Validate parameter ranges
+    if let Some(temp) = req.temperature {
+        if !(0.0..=2.0).contains(&temp) {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+                "temperature must be between 0 and 2",
+                Some("temperature"),
+            )
+            .into_response();
+        }
+    }
+    if let Some(top_p) = req.top_p {
+        if !(0.0..=1.0).contains(&top_p) {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+                "top_p must be between 0 and 1",
+                Some("top_p"),
+            )
+            .into_response();
+        }
+    }
+    if let Some(max_tokens) = req.max_tokens {
+        if max_tokens == 0 {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+                "max_tokens must be greater than 0",
+                Some("max_tokens"),
+            )
+            .into_response();
+        }
+    }
+
+    // Check that a provider is available
+    let provider = match &state.provider {
+        Some(p) => p.as_ref(),
+        None => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid_request_error",
+                &format!(
+                    "Model '{}' is not available: no LLM provider configured",
+                    req.model
+                ),
+                Some("model"),
+            )
+            .into_response();
+        }
+    };
+
     // Generate completion ID and timestamp
     let completion_id = format!("chatcmpl-{}", Uuid::new_v4());
     let created = Utc::now().timestamp();
 
-    // Resolve model to agent
-    // For now, the model field is treated as an agent identifier
-    let agent_identifier = req.model.clone();
+    // Convert OpenAI messages to provider format (full conversation context)
+    let (system_prompt, messages) = convert_oai_messages(&req.messages);
 
-    // Extract the most recent user message content
-    let user_content = extract_user_content(&req.messages);
+    // Build completion options
+    let mut options = CompletionOptions {
+        system_prompt,
+        ..Default::default()
+    };
+    if let Some(max_tokens) = req.max_tokens {
+        options.max_tokens = max_tokens;
+    }
+    if let Some(temp) = req.temperature {
+        options.temperature = Some(temp as f64);
+    }
+    if let Some(top_p) = req.top_p {
+        options.top_p = Some(top_p as f64);
+    }
+    if let Some(stop) = &req.stop {
+        options.stop_sequences = match stop {
+            OaiStop::String(s) => vec![s.clone()],
+            OaiStop::Array(a) => a.clone(),
+        };
+    }
+
+    let model = req.model.clone();
 
     if req.stream {
-        // Streaming response using Server-Sent Events
-        handle_streaming_request(
-            completion_id,
-            created,
-            agent_identifier,
-            user_content,
-            state,
-        )
-        .await
-        .into_response()
+        handle_streaming_request(completion_id, created, model, messages, options, provider)
+            .await
+            .into_response()
     } else {
-        // Non-streaming response
-        handle_non_streaming_request(
-            completion_id,
-            created,
-            agent_identifier,
-            user_content,
-            state,
-        )
-        .await
-        .into_response()
+        handle_non_streaming_request(completion_id, created, model, messages, options, provider)
+            .await
+            .into_response()
     }
 }
 
@@ -240,9 +300,26 @@ async fn handle_streaming_request(
     completion_id: String,
     created: i64,
     model: String,
-    user_content: String,
-    _state: Arc<AppState>,
+    messages: Vec<Message>,
+    options: CompletionOptions,
+    provider: &dyn Provider,
 ) -> impl IntoResponse {
+    // Start the provider stream before entering the SSE generator.
+    // If the provider call itself fails, return an HTTP error immediately.
+    let provider_stream = match provider.complete(&model, messages, options).await {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Provider error for model '{}': {}", model, e);
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "server_error",
+                &format!("LLM provider error: {e}"),
+                None,
+            )
+            .into_response();
+        }
+    };
+
     let stream = async_stream::stream! {
         // First chunk: role
         let role_chunk = ChatCompletionChunk {
@@ -261,66 +338,80 @@ async fn handle_streaming_request(
         };
 
         yield Ok::<_, Infallible>(SseEvent::default().data(
-            serde_json::to_string(&role_chunk).unwrap()
+            serde_json::to_string(&role_chunk).expect("role chunk serialization")
         ));
 
-        // TODO: Wire to actual LLM agent loop via WebSocket or direct agent communication
-        // For now, provide an echo response in chunks to demonstrate streaming
-        let response_text = format!("Echo from model '{model}': {user_content}");
+        // Stream real provider events
+        let mut provider_stream = provider_stream;
+        while let Some(event) = provider_stream.next().await {
+            match event {
+                StreamEvent::TextDelta(text) => {
+                    let content_chunk = ChatCompletionChunk {
+                        id: completion_id.clone(),
+                        object: "chat.completion.chunk".to_string(),
+                        created,
+                        model: model.clone(),
+                        choices: vec![ChunkChoice {
+                            index: 0,
+                            delta: Delta {
+                                role: None,
+                                content: Some(text),
+                            },
+                            finish_reason: None,
+                        }],
+                    };
 
-        // Stream response in chunks
-        for chunk in response_text.chars().collect::<Vec<_>>().chunks(3) {
-            let chunk_text: String = chunk.iter().collect();
+                    yield Ok(SseEvent::default().data(
+                        serde_json::to_string(&content_chunk).expect("content chunk serialization")
+                    ));
+                }
+                StreamEvent::Stop(_) => {
+                    // Emit final chunk with finish reason
+                    let final_chunk = ChatCompletionChunk {
+                        id: completion_id.clone(),
+                        object: "chat.completion.chunk".to_string(),
+                        created,
+                        model: model.clone(),
+                        choices: vec![ChunkChoice {
+                            index: 0,
+                            delta: Delta {
+                                role: None,
+                                content: None,
+                            },
+                            finish_reason: Some("stop".to_string()),
+                        }],
+                    };
 
-            let content_chunk = ChatCompletionChunk {
-                id: completion_id.clone(),
-                object: "chat.completion.chunk".to_string(),
-                created,
-                model: model.clone(),
-                choices: vec![ChunkChoice {
-                    index: 0,
-                    delta: Delta {
-                        role: None,
-                        content: Some(chunk_text),
-                    },
-                    finish_reason: None,
-                }],
-            };
-
-            yield Ok(SseEvent::default().data(
-                serde_json::to_string(&content_chunk).unwrap()
-            ));
-
-            // Small delay to simulate real streaming
-            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+                    yield Ok(SseEvent::default().data(
+                        serde_json::to_string(&final_chunk).expect("final chunk serialization")
+                    ));
+                }
+                StreamEvent::Done(_usage) => {
+                    // Usage arrives in Done event; streaming format doesn't include it
+                    // in individual chunks per OpenAI spec. Just terminate.
+                }
+                StreamEvent::Error(msg) => {
+                    error!("Stream error: {}", msg);
+                    // Can't change HTTP status mid-stream, just stop
+                    break;
+                }
+                // ToolUse, ContentBlock — not relevant for chat completions text streaming
+                _ => {}
+            }
         }
-
-        // Final chunk with finish reason
-        let final_chunk = ChatCompletionChunk {
-            id: completion_id.clone(),
-            object: "chat.completion.chunk".to_string(),
-            created,
-            model: model.clone(),
-            choices: vec![ChunkChoice {
-                index: 0,
-                delta: Delta {
-                    role: None,
-                    content: None,
-                },
-                finish_reason: Some("stop".to_string()),
-            }],
-        };
-
-        yield Ok(SseEvent::default().data(
-            serde_json::to_string(&final_chunk).unwrap()
-        ));
 
         // End stream with [DONE]
         yield Ok(SseEvent::default().data("[DONE]"));
     };
 
-    Sse::new(stream)
-        .keep_alive(KeepAlive::default())
+    // SSE response with proper headers for proxies/buffering (fixes #211)
+    (
+        [
+            (header::CACHE_CONTROL, "no-cache"),
+            (header::HeaderName::from_static("x-accel-buffering"), "no"),
+        ],
+        Sse::new(stream).keep_alive(KeepAlive::default()),
+    )
         .into_response()
 }
 
@@ -329,12 +420,56 @@ async fn handle_non_streaming_request(
     completion_id: String,
     created: i64,
     model: String,
-    user_content: String,
-    _state: Arc<AppState>,
+    messages: Vec<Message>,
+    options: CompletionOptions,
+    provider: &dyn Provider,
 ) -> impl IntoResponse {
-    // TODO: Wire to actual LLM agent loop
-    // For now, provide an echo response
-    let response_text = format!("Echo from model '{model}': {user_content}");
+    // Call the LLM provider
+    let mut stream = match provider.complete(&model, messages, options).await {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Provider error for model '{}': {}", model, e);
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "server_error",
+                &format!("LLM provider error: {e}"),
+                None,
+            )
+            .into_response();
+        }
+    };
+
+    // Collect the full response from the stream
+    let mut response_text = String::new();
+    let mut usage = Usage {
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        total_tokens: 0,
+    };
+
+    while let Some(event) = stream.next().await {
+        match event {
+            StreamEvent::TextDelta(text) => {
+                response_text.push_str(&text);
+            }
+            StreamEvent::Done(token_usage) => {
+                usage.prompt_tokens = token_usage.input_tokens;
+                usage.completion_tokens = token_usage.output_tokens;
+                usage.total_tokens = token_usage.input_tokens + token_usage.output_tokens;
+            }
+            StreamEvent::Error(msg) => {
+                error!("Provider stream error: {}", msg);
+                return error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "server_error",
+                    &format!("LLM provider error: {msg}"),
+                    None,
+                )
+                .into_response();
+            }
+            _ => {}
+        }
+    }
 
     let response = ChatCompletionResponse {
         id: completion_id,
@@ -345,44 +480,88 @@ async fn handle_non_streaming_request(
             index: 0,
             message: ChoiceMessage {
                 role: "assistant".to_string(),
-                content: response_text.clone(),
+                content: response_text,
             },
             finish_reason: "stop".to_string(),
         }],
-        usage: Usage {
-            prompt_tokens: estimate_tokens(&user_content),
-            completion_tokens: estimate_tokens(&response_text),
-            total_tokens: estimate_tokens(&user_content) + estimate_tokens(&response_text),
-        },
+        usage,
     };
 
     Json(response).into_response()
 }
 
-/// Extract user content from messages array.
-fn extract_user_content(messages: &[OaiMessage]) -> String {
-    messages
-        .iter()
-        .rev()
-        .find(|m| m.role == "user")
-        .map(|m| match &m.content {
-            OaiContent::Text(text) => text.clone(),
-            OaiContent::Parts(parts) => parts
-                .iter()
-                .map(|part| match part {
-                    OaiContentPart::Text { text } => text.clone(),
-                })
-                .collect::<Vec<_>>()
-                .join("\n"),
-            OaiContent::Null => String::new(),
-        })
-        .unwrap_or_default()
+// --- Message Conversion ---
+
+/// Convert OpenAI-format messages to provider Message format.
+///
+/// Returns `(system_prompt, messages)`. System messages are extracted as a
+/// separate system prompt (required by Anthropic), and all other messages
+/// are converted to the provider's `Message` type with full conversation context.
+fn convert_oai_messages(oai_messages: &[OaiMessage]) -> (Option<String>, Vec<Message>) {
+    let mut system_parts = Vec::new();
+    let mut messages = Vec::new();
+
+    for msg in oai_messages {
+        let content_text = extract_message_content(&msg.content);
+
+        match msg.role.as_str() {
+            "system" => {
+                system_parts.push(content_text);
+            }
+            "user" => {
+                messages.push(Message {
+                    role: Role::User,
+                    content: MessageContent::Text(content_text),
+                });
+            }
+            "assistant" => {
+                messages.push(Message {
+                    role: Role::Assistant,
+                    content: MessageContent::Text(content_text),
+                });
+            }
+            "tool" => {
+                messages.push(Message {
+                    role: Role::Tool,
+                    content: MessageContent::Text(content_text),
+                });
+            }
+            _ => {
+                // Unknown role — treat as user
+                debug!("Unknown message role '{}', treating as user", msg.role);
+                messages.push(Message {
+                    role: Role::User,
+                    content: MessageContent::Text(content_text),
+                });
+            }
+        }
+    }
+
+    let system_prompt = if system_parts.is_empty() {
+        None
+    } else {
+        Some(system_parts.join("\n\n"))
+    };
+
+    (system_prompt, messages)
 }
 
-/// Simple token estimation (rough approximation: ~4 chars per token).
-fn estimate_tokens(text: &str) -> u32 {
-    (text.len() as f32 / 4.0).ceil() as u32
+/// Extract text content from an OaiContent value.
+fn extract_message_content(content: &OaiContent) -> String {
+    match content {
+        OaiContent::Text(text) => text.clone(),
+        OaiContent::Parts(parts) => parts
+            .iter()
+            .map(|part| match part {
+                OaiContentPart::Text { text } => text.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        OaiContent::Null => String::new(),
+    }
 }
+
+// --- Models Discovery (unchanged) ---
 
 /// Discover available models from multiple sources.
 ///
@@ -428,7 +607,6 @@ async fn discover_available_models(state: &AppState) -> Vec<ModelInfo> {
 
 /// Validate that a model name is reasonable for inclusion in the models list.
 fn is_valid_model_name(model: &str) -> bool {
-    // Check for empty, whitespace-only, or unreasonably long model names
     let trimmed = model.trim();
     !trimmed.is_empty() && trimmed.len() <= 256 && !trimmed.chars().all(|c| c.is_whitespace())
 }
@@ -451,7 +629,6 @@ fn infer_model_owner(model_name: &str) -> String {
     } else if model_lower.contains("titan") {
         "amazon".to_string()
     } else {
-        // For unknown models, try to extract owner from model name patterns like "company/model"
         if let Some(slash_idx) = model_name.find('/') {
             model_name[..slash_idx].to_string()
         } else {
@@ -469,7 +646,6 @@ fn add_provider_models(
 ) {
     let providers = &state.config.providers;
 
-    // Anthropic models if API key is configured
     if !providers.anthropic_api_key.is_empty() {
         let anthropic_models = vec![
             "claude-3-5-sonnet-20241022",
@@ -491,7 +667,6 @@ fn add_provider_models(
         }
     }
 
-    // OpenAI models if API key is configured
     if !providers.openai_api_key.is_empty() {
         let openai_models = vec![
             "gpt-4o",
@@ -512,14 +687,9 @@ fn add_provider_models(
             }
         }
     }
-
-    // Note: We could add more providers (Ollama local models discovery,
-    // OpenRouter model listing, etc.) in the future by making HTTP calls
-    // to their respective APIs, but for now we'll stick to well-known models
-    // to keep the implementation performant and reliable.
 }
 
-/// Create error response.
+/// Create error response in OpenAI format.
 fn error_response(
     status: StatusCode,
     error_type: &str,
@@ -547,48 +717,94 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_extract_user_content_text() {
-        let messages = vec![
+    fn test_convert_oai_messages_full_conversation() {
+        let oai = vec![
             OaiMessage {
                 role: "system".to_string(),
-                content: OaiContent::Text("You are helpful".to_string()),
+                content: OaiContent::Text("You are helpful.".to_string()),
             },
             OaiMessage {
                 role: "user".to_string(),
-                content: OaiContent::Text("Hello world".to_string()),
+                content: OaiContent::Text("Hello".to_string()),
+            },
+            OaiMessage {
+                role: "assistant".to_string(),
+                content: OaiContent::Text("Hi there!".to_string()),
+            },
+            OaiMessage {
+                role: "user".to_string(),
+                content: OaiContent::Text("How are you?".to_string()),
             },
         ];
 
-        assert_eq!(extract_user_content(&messages), "Hello world");
+        let (system, messages) = convert_oai_messages(&oai);
+        assert_eq!(system.unwrap(), "You are helpful.");
+        assert_eq!(messages.len(), 3); // user, assistant, user (no system)
+        assert_eq!(messages[0].role, Role::User);
+        assert_eq!(messages[1].role, Role::Assistant);
+        assert_eq!(messages[2].role, Role::User);
     }
 
     #[test]
-    fn test_extract_user_content_parts() {
-        let messages = vec![OaiMessage {
+    fn test_convert_oai_messages_multiple_system() {
+        let oai = vec![
+            OaiMessage {
+                role: "system".to_string(),
+                content: OaiContent::Text("Rule 1".to_string()),
+            },
+            OaiMessage {
+                role: "system".to_string(),
+                content: OaiContent::Text("Rule 2".to_string()),
+            },
+            OaiMessage {
+                role: "user".to_string(),
+                content: OaiContent::Text("Hello".to_string()),
+            },
+        ];
+
+        let (system, messages) = convert_oai_messages(&oai);
+        assert_eq!(system.unwrap(), "Rule 1\n\nRule 2");
+        assert_eq!(messages.len(), 1);
+    }
+
+    #[test]
+    fn test_convert_oai_messages_no_system() {
+        let oai = vec![OaiMessage {
             role: "user".to_string(),
-            content: OaiContent::Parts(vec![OaiContentPart::Text {
-                text: "Hello from parts".to_string(),
-            }]),
+            content: OaiContent::Text("Hello".to_string()),
         }];
 
-        assert_eq!(extract_user_content(&messages), "Hello from parts");
+        let (system, messages) = convert_oai_messages(&oai);
+        assert!(system.is_none());
+        assert_eq!(messages.len(), 1);
     }
 
     #[test]
-    fn test_extract_user_content_empty() {
-        let messages = vec![OaiMessage {
-            role: "system".to_string(),
-            content: OaiContent::Text("System message only".to_string()),
+    fn test_convert_oai_messages_parts_content() {
+        let oai = vec![OaiMessage {
+            role: "user".to_string(),
+            content: OaiContent::Parts(vec![
+                OaiContentPart::Text {
+                    text: "Part 1".to_string(),
+                },
+                OaiContentPart::Text {
+                    text: "Part 2".to_string(),
+                },
+            ]),
         }];
 
-        assert_eq!(extract_user_content(&messages), "");
+        let (_, messages) = convert_oai_messages(&oai);
+        if let MessageContent::Text(text) = &messages[0].content {
+            assert_eq!(text, "Part 1\nPart 2");
+        } else {
+            panic!("Expected Text content");
+        }
     }
 
     #[test]
-    fn test_estimate_tokens() {
-        assert_eq!(estimate_tokens(""), 0);
-        assert_eq!(estimate_tokens("test"), 1); // 4 chars -> 1 token
-        assert_eq!(estimate_tokens("hello world"), 3); // 11 chars -> 3 tokens
+    fn test_extract_message_content_null() {
+        let content = OaiContent::Null;
+        assert_eq!(extract_message_content(&content), "");
     }
 
     #[test]
@@ -689,22 +905,19 @@ mod tests {
 
     #[test]
     fn test_is_valid_model_name() {
-        // Valid model names
         assert!(is_valid_model_name("gpt-4"));
         assert!(is_valid_model_name("claude-3-sonnet"));
         assert!(is_valid_model_name("company/model-name"));
-        assert!(is_valid_model_name("a")); // Single character is ok
+        assert!(is_valid_model_name("a"));
 
-        // Invalid model names
-        assert!(!is_valid_model_name("")); // Empty
-        assert!(!is_valid_model_name("   ")); // Whitespace only
-        assert!(!is_valid_model_name("\t\n  ")); // Various whitespace
-        assert!(!is_valid_model_name(&"x".repeat(257))); // Too long (>256 chars)
+        assert!(!is_valid_model_name(""));
+        assert!(!is_valid_model_name("   "));
+        assert!(!is_valid_model_name("\t\n  "));
+        assert!(!is_valid_model_name(&"x".repeat(257)));
 
-        // Edge cases
-        assert!(is_valid_model_name(" valid-model ")); // Trimmed, so valid
-        assert!(is_valid_model_name("model-with-123")); // Numbers ok
-        assert!(is_valid_model_name("model.with.dots")); // Dots ok
+        assert!(is_valid_model_name(" valid-model "));
+        assert!(is_valid_model_name("model-with-123"));
+        assert!(is_valid_model_name("model.with.dots"));
     }
 
     #[test]

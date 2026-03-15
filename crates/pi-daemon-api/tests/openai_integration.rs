@@ -33,11 +33,9 @@ async fn test_non_streaming_chat_completion() {
     assert_openai_completion!(body);
     assert_eq!(body["model"], "test-model");
 
-    // Verify content is present
-    assert!(body["choices"][0]["message"]["content"]
-        .as_str()
-        .unwrap()
-        .contains("Echo"));
+    // Verify content is present (mock provider echoes the user message)
+    let content = body["choices"][0]["message"]["content"].as_str().unwrap();
+    assert!(!content.is_empty(), "Response content should not be empty");
 }
 
 #[tokio::test]
@@ -1133,4 +1131,376 @@ async fn test_models_endpoint_with_configured_providers() {
             assert_eq!(owned_by, "openai", "GPT models should be owned by openai");
         }
     }
+}
+
+// ─── Issue #236: LLM Provider Wiring Tests ─────────────────────────────────
+
+#[tokio::test]
+async fn test_no_provider_returns_model_not_available() {
+    let server = FullTestServer::without_provider().await;
+    let client = server.client();
+
+    let response = client
+        .post_json(
+            "/v1/chat/completions",
+            &serde_json::json!({
+                "model": "claude-3-5-sonnet-20241022",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "stream": false
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), 400);
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .expect("error response should be valid JSON");
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .expect("error message should be a string")
+            .contains("not available"),
+        "Error message should mention 'not available': {}",
+        body["error"]["message"]
+    );
+}
+
+#[tokio::test]
+async fn test_temperature_validation_out_of_range() {
+    let server = FullTestServer::new().await;
+    let client = server.client();
+
+    // temperature > 2 should fail
+    let response = client
+        .post_json(
+            "/v1/chat/completions",
+            &serde_json::json!({
+                "model": "test",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "temperature": 2.5,
+                "stream": false
+            }),
+        )
+        .await;
+    assert_eq!(response.status(), 400);
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .expect("validation error should be valid JSON");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .expect("error message should be a string")
+            .contains("temperature"),
+        "Error should mention temperature: {}",
+        body["error"]["message"]
+    );
+
+    // temperature < 0 should fail
+    let response = client
+        .post_json(
+            "/v1/chat/completions",
+            &serde_json::json!({
+                "model": "test",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "temperature": -0.1,
+                "stream": false
+            }),
+        )
+        .await;
+    assert_eq!(response.status(), 400);
+}
+
+#[tokio::test]
+async fn test_top_p_validation_out_of_range() {
+    let server = FullTestServer::new().await;
+    let client = server.client();
+
+    let response = client
+        .post_json(
+            "/v1/chat/completions",
+            &serde_json::json!({
+                "model": "test",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "top_p": 1.5,
+                "stream": false
+            }),
+        )
+        .await;
+    assert_eq!(response.status(), 400);
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .expect("validation error should be valid JSON");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .expect("error message should be a string")
+            .contains("top_p"),
+        "Error should mention top_p: {}",
+        body["error"]["message"]
+    );
+}
+
+#[tokio::test]
+async fn test_max_tokens_validation_zero() {
+    let server = FullTestServer::new().await;
+    let client = server.client();
+
+    let response = client
+        .post_json(
+            "/v1/chat/completions",
+            &serde_json::json!({
+                "model": "test",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "max_tokens": 0,
+                "stream": false
+            }),
+        )
+        .await;
+    assert_eq!(response.status(), 400);
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .expect("validation error should be valid JSON");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .expect("error message should be a string")
+            .contains("max_tokens"),
+        "Error should mention max_tokens: {}",
+        body["error"]["message"]
+    );
+}
+
+#[tokio::test]
+async fn test_valid_parameter_boundaries_accepted() {
+    let server = FullTestServer::new().await;
+    let client = server.client();
+
+    // Boundary values should be accepted
+    let body = client
+        .post_json_expect(
+            "/v1/chat/completions",
+            &serde_json::json!({
+                "model": "test",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "temperature": 0.0,
+                "top_p": 0.0,
+                "max_tokens": 1,
+                "stream": false
+            }),
+            200,
+        )
+        .await;
+    assert_eq!(body["object"], "chat.completion");
+
+    let body = client
+        .post_json_expect(
+            "/v1/chat/completions",
+            &serde_json::json!({
+                "model": "test",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "temperature": 2.0,
+                "top_p": 1.0,
+                "stream": false
+            }),
+            200,
+        )
+        .await;
+    assert_eq!(body["object"], "chat.completion");
+}
+
+#[tokio::test]
+async fn test_full_conversation_context_sent() {
+    let server = FullTestServer::new().await;
+    let client = server.client();
+
+    // The mock provider echoes the last user message.
+    // With full context, "What is 3+3?" should be in the response.
+    let body = client
+        .post_json_expect(
+            "/v1/chat/completions",
+            &serde_json::json!({
+                "model": "test",
+                "messages": [
+                    {"role": "system", "content": "You are a math tutor"},
+                    {"role": "user", "content": "What is 2+2?"},
+                    {"role": "assistant", "content": "4"},
+                    {"role": "user", "content": "What is 3+3?"}
+                ],
+                "stream": false
+            }),
+            200,
+        )
+        .await;
+
+    let content = body["choices"][0]["message"]["content"]
+        .as_str()
+        .expect("response content should be a string");
+    // Mock echoes the last user message
+    assert!(
+        content.contains("3+3"),
+        "Response should contain the last user message: {}",
+        content
+    );
+}
+
+#[tokio::test]
+async fn test_streaming_has_sse_headers() {
+    let server = FullTestServer::new().await;
+    let client = server.client();
+
+    let response = client
+        .post_json(
+            "/v1/chat/completions",
+            &serde_json::json!({
+                "model": "test",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "stream": true
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), 200);
+
+    // Verify SSE-related headers (fixes #211)
+    let cache_control = response
+        .headers()
+        .get("cache-control")
+        .expect("Should have Cache-Control header")
+        .to_str()
+        .expect("Cache-Control should be valid UTF-8");
+    assert!(
+        cache_control.contains("no-cache"),
+        "Cache-Control should contain no-cache, got: {}",
+        cache_control
+    );
+
+    let x_accel = response
+        .headers()
+        .get("x-accel-buffering")
+        .expect("Should have X-Accel-Buffering header")
+        .to_str()
+        .expect("X-Accel-Buffering should be valid UTF-8");
+    assert_eq!(x_accel, "no", "X-Accel-Buffering should be 'no'");
+}
+
+#[tokio::test]
+async fn test_real_token_usage_in_response() {
+    let server = FullTestServer::new().await;
+    let client = server.client();
+
+    let body = client
+        .post_json_expect(
+            "/v1/chat/completions",
+            &serde_json::json!({
+                "model": "test",
+                "messages": [{"role": "user", "content": "Hello world, this is a test message"}],
+                "stream": false
+            }),
+            200,
+        )
+        .await;
+
+    let usage = &body["usage"];
+    let prompt_tokens = usage["prompt_tokens"]
+        .as_u64()
+        .expect("prompt_tokens should be a number");
+    let completion_tokens = usage["completion_tokens"]
+        .as_u64()
+        .expect("completion_tokens should be a number");
+    let total_tokens = usage["total_tokens"]
+        .as_u64()
+        .expect("total_tokens should be a number");
+
+    // Token counts come from the provider's Done event, not estimate_tokens()
+    assert!(prompt_tokens > 0, "prompt_tokens should be > 0");
+    assert!(completion_tokens > 0, "completion_tokens should be > 0");
+    assert_eq!(
+        total_tokens,
+        prompt_tokens + completion_tokens,
+        "total should equal prompt + completion"
+    );
+}
+
+#[tokio::test]
+async fn test_stop_sequences_forwarded() {
+    let server = FullTestServer::new().await;
+    let client = server.client();
+
+    // String stop sequence
+    let body = client
+        .post_json_expect(
+            "/v1/chat/completions",
+            &serde_json::json!({
+                "model": "test",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "stop": "END",
+                "stream": false
+            }),
+            200,
+        )
+        .await;
+    assert_eq!(body["object"], "chat.completion");
+
+    // Array stop sequences
+    let body = client
+        .post_json_expect(
+            "/v1/chat/completions",
+            &serde_json::json!({
+                "model": "test",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "stop": ["END", "STOP"],
+                "stream": false
+            }),
+            200,
+        )
+        .await;
+    assert_eq!(body["object"], "chat.completion");
+}
+
+#[tokio::test]
+async fn test_streaming_mock_provider_text_content() {
+    let server = FullTestServer::new().await;
+    let client = server.client();
+
+    let response = client
+        .post_json(
+            "/v1/chat/completions",
+            &serde_json::json!({
+                "model": "test",
+                "messages": [{"role": "user", "content": "Tell me something"}],
+                "stream": true
+            }),
+        )
+        .await;
+
+    assert_eq!(response.status(), 200);
+    let body = response
+        .text()
+        .await
+        .expect("streaming response should have a text body");
+
+    // Collect all text deltas from chunks
+    let mut full_text = String::new();
+    for line in body.lines() {
+        if line.starts_with("data: {") {
+            let json_str = &line[6..];
+            let chunk: serde_json::Value =
+                serde_json::from_str(json_str).expect("SSE chunk should be valid JSON");
+            if let Some(content) = chunk["choices"][0]["delta"]["content"].as_str() {
+                full_text.push_str(content);
+            }
+        }
+    }
+
+    // Reassembled text should contain the user message echoed back
+    assert!(
+        full_text.contains("Tell me something"),
+        "Streamed text should contain user message: {}",
+        full_text
+    );
 }
