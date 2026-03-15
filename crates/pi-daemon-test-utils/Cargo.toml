@@ -10,12 +10,8 @@ publish = false
 pi-daemon-kernel = { path = "../pi-daemon-kernel" }
 pi-daemon-api = { path = "../pi-daemon-api" }
 pi-daemon-types = { path = "../pi-daemon-types" }
-pi-daemon-provider = { path = "../pi-daemon-provider" }
 tokio = { workspace = true, features = ["macros", "time", "rt-multi-thread"] }
 axum = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
 serde_json = { workspace = true }
-async-trait = { workspace = true }
-async-stream = { workspace = true }
-tokio-stream = { workspace = true }
 tempfile = "3"

@@ -10,13 +10,11 @@
 pub mod client;
 pub mod kernel;
 pub mod macros;
-pub mod mock_provider;
 pub mod server;
 
 // Re-export main types for convenience
 pub use client::TestClient;
 pub use kernel::TestKernel;
-pub use mock_provider::MockProvider;
 pub use server::{FullTestServer, TestServer};
 
 #[cfg(test)]
