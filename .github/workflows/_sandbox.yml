@@ -65,6 +65,8 @@ jobs:
       - name: "Smoke: Start daemon in foreground"
         run: |
           echo "Starting pi-daemon in foreground..."
+          # Export API key so daemon process inherits it
+          export OPENROUTER_API_KEY="${OPENROUTER_API_KEY}"
           ./target/release/pi-daemon start --foreground &
           DAEMON_PID=$!
           echo "DAEMON_PID=$DAEMON_PID" >> $GITHUB_ENV
