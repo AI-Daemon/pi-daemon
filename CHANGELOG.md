@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Default `listen_addr` changed from `127.0.0.1:4200` to `0.0.0.0:4200` for network access (#155)
+  - Enables webapp access from mobile devices (iOS, Android) and other network clients
+  - Added configuration documentation with security considerations
+  - Users requiring localhost-only access can set `PI_DAEMON_LISTEN_ADDR=127.0.0.1:4200`
+
 ### Fixed
 - 30-second HTTP request timeout was killing WebSocket and SSE streaming connections (#207)
   - Split route tree so `TimeoutLayer(30s)` only applies to REST API endpoints (`/api/*`, `/v1/models`)

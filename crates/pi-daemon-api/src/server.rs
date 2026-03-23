@@ -108,14 +108,32 @@ pub async fn run_daemon(kernel: Arc<PiDaemonKernel>, config: DaemonConfig) -> an
     let (router, state) = build_router(kernel, config);
 
     info!("pi-daemon listening on http://{addr}");
+    
+    // Additional logging for network debugging
+    if addr.ip().is_unspecified() {
+        info!("Server bound to all interfaces (0.0.0.0), accessible from network");
+        info!("Access from mobile devices: find your machine's IP address and use http://[IP]:{}",  addr.port());
+    } else if addr.ip().is_loopback() {
+        info!("Server bound to localhost only, not accessible from network");
+        info!("To enable network access, set PI_DAEMON_LISTEN_ADDR=0.0.0.0:{}", addr.port());
+    }
 
-    let socket = tokio::net::TcpSocket::new_v4()?;
+    let socket = if addr.is_ipv6() {
+        tokio::net::TcpSocket::new_v6()?
+    } else {
+        tokio::net::TcpSocket::new_v4()?
+    };
 
     // Enable SO_REUSEADDR so the port can be re-bound quickly after a crash
     // or restart (avoids TIME_WAIT blocking).
     socket.set_reuseaddr(true)?;
 
-    socket.bind(addr)?;
+    socket.bind(addr).map_err(|e| {
+        anyhow::anyhow!(
+            "Failed to bind to {}: {}. Port may be in use or permission denied. Try a different port or check firewall settings.",
+            addr, e
+        )
+    })?;
     let listener = socket.listen(1024)?;
 
     axum::serve(

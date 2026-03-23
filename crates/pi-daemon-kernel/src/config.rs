@@ -119,6 +119,7 @@ fn create_config_toml(config: &DaemonConfig) -> DaemonResult<String> {
 
     toml.push_str("# pi-daemon configuration\n\n");
     toml.push_str("# HTTP server listen address\n");
+    toml.push_str("# Use 0.0.0.0:4200 for network access, 127.0.0.1:4200 for localhost only\n");
     toml.push_str(&format!("listen_addr = \"{}\"\n\n", config.listen_addr));
     toml.push_str("# API key for authenticating requests (empty = no auth)\n");
     toml.push_str(&format!("api_key = \"{}\"\n\n", config.api_key));
@@ -294,7 +295,7 @@ mod tests {
     fn test_load_config_creates_default_when_missing() {
         with_temp_home(|_temp| {
             let config = load_config().unwrap();
-            assert_eq!(config.listen_addr, "127.0.0.1:4200");
+            assert_eq!(config.listen_addr, "0.0.0.0:4200");
             assert_eq!(config.default_model, "claude-sonnet-4-20250514");
 
             // Config file should have been created
@@ -360,7 +361,7 @@ mod tests {
         with_temp_home(|_temp| {
             let info = pi_daemon_types::config::DaemonInfo {
                 pid: 12345,
-                listen_addr: "127.0.0.1:4200".to_string(),
+                listen_addr: "0.0.0.0:4200".to_string(),
                 started_at: "2026-03-09T05:30:00Z".to_string(),
                 version: "0.1.0".to_string(),
             };
@@ -374,7 +375,7 @@ mod tests {
             let loaded = read_daemon_info().unwrap();
 
             assert_eq!(loaded.pid, 12345);
-            assert_eq!(loaded.listen_addr, "127.0.0.1:4200");
+            assert_eq!(loaded.listen_addr, "0.0.0.0:4200");
             assert_eq!(loaded.version, "0.1.0");
 
             remove_daemon_info();

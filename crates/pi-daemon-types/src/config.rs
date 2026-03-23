@@ -5,7 +5,8 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DaemonConfig {
-    /// HTTP listen address (default: "127.0.0.1:4200").
+    /// HTTP listen address (default: "0.0.0.0:4200").
+    /// Use "127.0.0.1:4200" for localhost-only access.
     pub listen_addr: String,
 
     /// API key for authenticating HTTP/WebSocket requests.
@@ -36,7 +37,7 @@ impl Default for DaemonConfig {
             .join(".pi-daemon")
             .join("data");
         Self {
-            listen_addr: "127.0.0.1:4200".to_string(),
+            listen_addr: "0.0.0.0:4200".to_string(),
             api_key: String::new(),
             default_model: "claude-sonnet-4-20250514".to_string(),
             data_dir,
@@ -140,7 +141,7 @@ mod tests {
     #[test]
     fn test_daemon_config_default_values() {
         let config = DaemonConfig::default();
-        assert_eq!(config.listen_addr, "127.0.0.1:4200");
+        assert_eq!(config.listen_addr, "0.0.0.0:4200");
         assert_eq!(config.api_key, "");
         assert_eq!(config.default_model, "claude-sonnet-4-20250514");
         assert!(config.data_dir.to_string_lossy().contains(".pi-daemon"));
@@ -186,7 +187,7 @@ mod tests {
     fn test_daemon_info_serialization() {
         let info = DaemonInfo {
             pid: 1234,
-            listen_addr: "127.0.0.1:4200".to_string(),
+            listen_addr: "0.0.0.0:4200".to_string(),
             started_at: "2026-03-09T05:30:00Z".to_string(),
             version: "0.1.0".to_string(),
         };
@@ -195,7 +196,7 @@ mod tests {
         let parsed: DaemonInfo = serde_json::from_str(&json).unwrap();
 
         assert_eq!(parsed.pid, 1234);
-        assert_eq!(parsed.listen_addr, "127.0.0.1:4200");
+        assert_eq!(parsed.listen_addr, "0.0.0.0:4200");
         assert_eq!(parsed.version, "0.1.0");
     }
 }
